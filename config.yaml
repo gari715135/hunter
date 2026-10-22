@@ -22,6 +22,21 @@ prometheus:
     - sysdig_connection_net_connection_out_count
     - connection_request_count
 
+  # Per-cluster queries add kube_namespace_name!="<ns>" for each entry.
+  # "" drops series with no namespace label (host-level traffic).
+  exclude_namespaces:
+    - ""
+    - amazon-guardduty
+    - domino-platform
+    - dynatrace
+    - istio-system
+    - kube-system
+    - monitoring
+    - redis
+    - splunk
+    - sysdig-agent
+    - traceable-ai
+
   # Server-side aggregation: query becomes `<op> by (<by>) (<selector>)`,
   # or `<op> by (<by>) (<fn>(<selector>[<step>s]))` when a time function is set below.
   # Verified exact vs. the raw sum (difference ~1e-10 relative) on 2026-10-14.
