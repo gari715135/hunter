@@ -1,10 +1,74 @@
 # ./src/prometheus_tools/client.py
 import time
+from dataclasses import dataclass
 from logging import Logger
+from typing import Optional
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
+
+from src.prometheus_tools.utils import elapsed_ms
+
+REQUEST_TIMEOUT_SECONDS = 15
+BODY_PREVIEW_CHARS = 500
+
+
+class PromQueryError(Exception):
+    """A Prometheus API request that did not produce a usable response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        endpoint: str,
+        status_code: Optional[int] = None,
+        error_type: Optional[str] = None,
+        error: Optional[str] = None,
+        attempts: int = 1,
+        elapsed_ms: Optional[int] = None,
+        body_preview: Optional[str] = None,
+    ):
+        super().__init__(f"{message}: {error}" if error else message)
+        self.endpoint = endpoint
+        self.status_code = status_code
+        self.error_type = error_type
+        self.error = error or message
+        self.attempts = attempts
+        self.elapsed_ms = elapsed_ms
+        self.body_preview = body_preview
+
+    def as_fields(self) -> dict:
+        fields = {
+            "endpoint": self.endpoint,
+            "http_status": self.status_code,
+            "error_type": self.error_type,
+            "error": self.error,
+            "attempts": self.attempts,
+            "http_ms": self.elapsed_ms,
+            "body_preview": self.body_preview,
+        }
+        return {k: v for k, v in fields.items() if v is not None}
+
+
+@dataclass
+class PromResponse:
+    data: dict
+    status_code: int
+    attempts: int
+    elapsed_ms: int
+    response_bytes: int
+
+
+def _parse_prom_error(response: requests.Response):
+    """Return (errorType, error) from a Prometheus-style error body, or (None, None)."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None, None
+    if isinstance(body, dict):
+        return body.get("errorType"), body.get("error")
+    return None, None
 
 
 class PrometheusClient:
@@ -19,110 +83,206 @@ class PrometheusClient:
         self.logger = logger
         self.base_url = base_url.replace("https://", "")
 
-        self.logger.info(f"Initializing Prometheus client base_url={self.base_url}")
+        self.logger.info("Initializing Prometheus client", extra={"event": "client_init", "base_url": self.base_url})
 
         # Create session and build headers
         headers = {"Authorization": f"Bearer {self.bearer_token}"}
         self.session = requests.Session()
         self.session.headers = headers
 
-        # Configure retries
+        # Transport-level retries: connection errors, read timeouts, and throttling/5xx responses.
+        # Status retries are reported from the response's retry history in _send_get_request.
         retries = Retry(
-            total=7,
-            backoff_factor=0.1,
+            total=4,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
+            respect_retry_after_header=True,
             raise_on_status=False,
         )
         self.session.mount("https://", HTTPAdapter(max_retries=retries))
-        self.logger.debug("HTTP session configured with retry policy total_retries=7 backoff_factor=0.1")
+        self.logger.debug(
+            "HTTP session configured",
+            extra={
+                "event": "client_retry_policy",
+                "retry_total": retries.total,
+                "backoff_factor": retries.backoff_factor,
+                "status_forcelist": sorted(retries.status_forcelist),
+                "timeout_s": REQUEST_TIMEOUT_SECONDS,
+            },
+        )
 
-    def _send_get_request(self, endpoint, params, max_retries=3):
+    @staticmethod
+    def _retry_history(response: requests.Response) -> tuple:
+        retries = getattr(response.raw, "retries", None)
+        return tuple(getattr(retries, "history", None) or ())
+
+    def _send_get_request(self, endpoint, params, max_retries=3) -> PromResponse:
+        """GET a Prometheus API endpoint. Raises PromQueryError on any failure."""
         prom_endpoint = f"prometheus/{endpoint}".replace("//", "/")
         url = f"https://{self.base_url}/{prom_endpoint}"
+        # The query itself is logged once by the caller; keep request lines small.
+        log_params = {k: v for k, v in params.items() if k != "query"}
 
-        for attempt in range(max_retries):
-            self.logger.debug(f"Sending GET request url={url} params={params} " f"attempt={attempt + 1}/{max_retries}")
-            start_time = time.time()
+        start_time = time.monotonic()
+        attempts = 0
+
+        # Outer loop only retries incomplete bodies (ChunkedEncodingError), which happen after
+        # urllib3 has returned the response and so are not covered by its Retry policy.
+        for attempt in range(1, max_retries + 1):
+            attempts += 1
+            self.logger.debug(
+                "Sending GET request",
+                extra={
+                    "event": "http_request",
+                    "url": url,
+                    "params": log_params,
+                    "attempt": attempt,
+                    "max_attempts": max_retries,
+                },
+            )
+            attempt_start = time.monotonic()
 
             try:
                 response = self.session.request(
                     method="GET",
                     url=url,
                     params=params,
-                    timeout=15,
+                    timeout=REQUEST_TIMEOUT_SECONDS,
                 )
 
-                elapsed = time.time() - start_time
-
-                if response.ok:
-                    self.logger.debug(
-                        f"Request successful status_code={response.status_code} " f"response_time_ms={elapsed*1000:.2f}"
-                    )
-                    try:
-                        return response.json()
-                    except requests.exceptions.JSONDecodeError as e:
-                        self.logger.error(
-                            f"Failed to decode JSON response status_code={response.status_code} "
-                            f'error="{e}" content_preview={response.content[:200]}'
-                        )
-                        return None
-                else:
-                    self.logger.error(
-                        f"Request failed status_code={response.status_code} "
-                        f'reason="{response.reason}" response_time_ms={elapsed*1000:.2f}'
-                    )
-                    return None
-
-            except requests.exceptions.Timeout:
-                elapsed = time.time() - start_time
-                self.logger.error(f"Request timeout url={url} timeout_seconds=15 " f"elapsed_seconds={elapsed:.2f}")
-                return None
-
             except requests.exceptions.ChunkedEncodingError as e:
-                elapsed = time.time() - start_time
-
-                # Retry on chunked encoding errors (incomplete reads)
-                if attempt < max_retries - 1:
-                    backoff = 0.1 * (2**attempt)  # 0.1s, 0.2s, 0.4s
+                if attempt < max_retries:
+                    backoff = 0.1 * (2 ** (attempt - 1))  # 0.1s, 0.2s, 0.4s
                     self.logger.warning(
-                        f"ChunkedEncodingError on attempt {attempt + 1}/{max_retries} "
-                        f"url={url} query={params.get('query')} error='{e}' elapsed_seconds={elapsed:.2f} "
-                        f"retrying_in={backoff:.2f}s"
+                        "Incomplete response body, retrying",
+                        extra={
+                            "event": "http_retry",
+                            "url": url,
+                            "attempt": attempt,
+                            "max_attempts": max_retries,
+                            "error_type": type(e).__name__,
+                            "error": str(e),
+                            "attempt_ms": elapsed_ms(attempt_start),
+                            "retry_in_ms": int(backoff * 1000),
+                        },
                     )
                     time.sleep(backoff)
-                    continue  # Retry the request
-                else:
-                    # Final attempt failed
-                    self.logger.error(
-                        f"ChunkedEncodingError after {max_retries} attempts "
-                        f"url={url} query={params.get('query')} error='{e}' elapsed_seconds={elapsed:.2f}"
-                    )
-                    return None
+                    continue
+                raise PromQueryError(
+                    "Incomplete response body after retries",
+                    endpoint=endpoint,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    attempts=attempts,
+                    elapsed_ms=elapsed_ms(start_time),
+                ) from e
+
+            except requests.exceptions.Timeout as e:
+                raise PromQueryError(
+                    "Request timed out",
+                    endpoint=endpoint,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    attempts=attempts,
+                    elapsed_ms=elapsed_ms(start_time),
+                ) from e
 
             except requests.exceptions.RequestException as e:
-                elapsed = time.time() - start_time
-                self.logger.error(f'Request exception url={url} error="{e}" ' f"elapsed_seconds={elapsed:.2f}")
-                return None
+                raise PromQueryError(
+                    "Request failed",
+                    endpoint=endpoint,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    attempts=attempts,
+                    elapsed_ms=elapsed_ms(start_time),
+                ) from e
 
-        # Should never reach here, but just in case
-        return None
+            history = self._retry_history(response)
+            attempts += len(history)
+            if history:
+                self.logger.warning(
+                    "Request needed transport retries",
+                    extra={
+                        "event": "http_transport_retries",
+                        "url": url,
+                        "retries": len(history),
+                        "retry_statuses": [h.status for h in history],
+                        "retry_errors": [str(h.error) for h in history if h.error],
+                    },
+                )
 
-    def query(self, prom_query: str):
+            total_ms = elapsed_ms(start_time)
+            response_bytes = len(response.content)
+
+            if not response.ok:
+                error_type, error = _parse_prom_error(response)
+                raise PromQueryError(
+                    f"HTTP {response.status_code} {response.reason}",
+                    endpoint=endpoint,
+                    status_code=response.status_code,
+                    error_type=error_type or response.reason,
+                    error=error,
+                    attempts=attempts,
+                    elapsed_ms=total_ms,
+                    body_preview=None if error else response.text[:BODY_PREVIEW_CHARS],
+                )
+
+            try:
+                data = response.json()
+            except ValueError as e:
+                raise PromQueryError(
+                    "Response was not valid JSON",
+                    endpoint=endpoint,
+                    status_code=response.status_code,
+                    error_type="JSONDecodeError",
+                    error=str(e),
+                    attempts=attempts,
+                    elapsed_ms=total_ms,
+                    body_preview=response.text[:BODY_PREVIEW_CHARS],
+                ) from e
+
+            self.logger.debug(
+                "Request successful",
+                extra={
+                    "event": "http_response",
+                    "url": url,
+                    "http_status": response.status_code,
+                    "attempts": attempts,
+                    "http_ms": total_ms,
+                    "response_bytes": response_bytes,
+                },
+            )
+            return PromResponse(
+                data=data,
+                status_code=response.status_code,
+                attempts=attempts,
+                elapsed_ms=total_ms,
+                response_bytes=response_bytes,
+            )
+
+        # Unreachable: every loop iteration returns, continues, or raises
+        raise PromQueryError("No attempts made", endpoint=endpoint, attempts=attempts)
+
+    def query(self, prom_query: str) -> dict:
         params = dict(query=prom_query, max_series=2000, limit=2000)
 
-        # self.logger.info(f'Executing instant query query="{prom_query}"')
         response = self._send_get_request("/api/v1/query", params)
+        data = response.data
+        self.logger.info(
+            "Instant query completed",
+            extra={
+                "event": "prom_instant_query",
+                "status": data.get("status"),
+                "series": len(data.get("data", {}).get("result", [])),
+            },
+        )
+        return data
 
-        if response:
-            status = response.get("status")
-            result_count = len(response.get("data", {}).get("result", []))
-            self.logger.info(f"Instant query completed status={status} result_count={result_count}")
-
-        return response
-
-    def query_range(self, prom_query: str, start: int, end: int, step: int):
+    def query_range(self, prom_query: str, start: int, end: int, step: int) -> PromResponse:
+        """Range query. Raises PromQueryError if the request fails."""
         if start >= end:
-            self.logger.error(f"Invalid time range start={start} end={end}")
+            self.logger.error("Invalid time range", extra={"event": "invalid_time_range", "start": start, "end": end})
             raise ValueError("Start must be before end")
 
         params = dict(
@@ -133,42 +293,63 @@ class PrometheusClient:
             limit=0,
         )
 
-        duration = end - start
-
         response = self._send_get_request("/api/v1/query_range", params)
-
-        if response:
-            status = response.get("status")
-            result_count = len(response.get("data", {}).get("result", []))
-            # self.logger.info(
-            #     f"Range query completed status={status} result_count={result_count}"
-            # )
-
+        self.logger.debug(
+            "Range query completed",
+            extra={
+                "event": "prom_range_query",
+                "status": response.data.get("status"),
+                "series": len(response.data.get("data", {}).get("result", [])),
+                "response_bytes": response.response_bytes,
+            },
+        )
         return response
 
     def get_labels(self):
-        self.logger.debug("Fetching all labels")
-        params = {}
-        response = self._send_get_request("/api/v1/labels", params)
+        self.logger.debug("Fetching all labels", extra={"event": "labels_fetch"})
+        try:
+            data = self._send_get_request("/api/v1/labels", {}).data
+        except PromQueryError as e:
+            self.logger.warning("Failed to fetch labels", extra={"event": "labels_fetch_failed", **e.as_fields()})
+            return None
 
-        if response and response.get("status") == "success":
-            labels = response.get("data", [])
-            self.logger.info(f"Labels fetched successfully count={len(labels)}")
+        if data.get("status") == "success":
+            labels = data.get("data", [])
+            self.logger.info("Labels fetched", extra={"event": "labels_fetched", "count": len(labels)})
             return labels
 
-        self.logger.warning("Failed to fetch labels or received non-success status")
+        self.logger.warning(
+            "Labels request returned non-success status",
+            extra={"event": "labels_fetch_failed", "status": data.get("status"), "error": data.get("error")},
+        )
         return None
 
     def get_label_values(self, label: str):
-        self.logger.debug(f"Fetching values for label={label}")
-        params = {}
+        self.logger.debug("Fetching label values", extra={"event": "label_values_fetch", "label": label})
         endpoint = f"/api/v1/label/{label}/values"
-        response = self._send_get_request(endpoint, params)
+        try:
+            data = self._send_get_request(endpoint, {}).data
+        except PromQueryError as e:
+            self.logger.warning(
+                "Failed to fetch label values",
+                extra={"event": "label_values_fetch_failed", "label": label, **e.as_fields()},
+            )
+            return None
 
-        if response and response.get("status") == "success":
-            values = response.get("data", [])
-            self.logger.info(f"Label values fetched successfully label={label} count={len(values)}")
+        if data.get("status") == "success":
+            values = data.get("data", [])
+            self.logger.info(
+                "Label values fetched", extra={"event": "label_values_fetched", "label": label, "count": len(values)}
+            )
             return values
 
-        self.logger.warning(f"Failed to fetch label values label={label}")
+        self.logger.warning(
+            "Label values request returned non-success status",
+            extra={
+                "event": "label_values_fetch_failed",
+                "label": label,
+                "status": data.get("status"),
+                "error": data.get("error"),
+            },
+        )
         return None
