@@ -65,8 +65,9 @@ class PromDataIngester:
 
         # Optional server-side aggregation (see prometheus.aggregation in config.yaml)
         self.aggregation = Aggregation.from_config(prom_conf.get("aggregation"))
-        # Namespaces dropped from per-cluster queries (see prometheus.exclude_namespaces in config.yaml)
+        # Namespaces/containers dropped from per-cluster queries (see prometheus.exclude_* in config.yaml)
         self.exclude_namespaces = tuple(prom_conf.get("exclude_namespaces") or [])
+        self.exclude_containers = tuple(prom_conf.get("exclude_containers") or [])
 
         qp = config.get("query_params", {})
         self.t_start = qp["start"]
@@ -84,6 +85,7 @@ class PromDataIngester:
                 "time_functions": self.aggregation.time_functions,
                 "aggregation_labels": len(self.aggregation.by),
                 "excluded_namespaces": list(self.exclude_namespaces),
+                "excluded_containers": list(self.exclude_containers),
             },
         )
 
@@ -244,7 +246,12 @@ class PromDataIngester:
         save_cluster_name = "all_clusters" if fetch_all_clusters else cluster_name
         result = JobResult(metric=metric_name, cluster=save_cluster_name)
 
-        selector = cluster_selector(metric_name, None if fetch_all_clusters else cluster_name, self.exclude_namespaces)
+        selector = cluster_selector(
+            metric_name,
+            None if fetch_all_clusters else cluster_name,
+            self.exclude_namespaces,
+            self.exclude_containers,
+        )
         q = self.aggregation.wrap(selector, metric_name, self.step_seconds)
         self.logger.info(
             "Querying metric",

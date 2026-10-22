@@ -37,6 +37,10 @@ prometheus:
     - sysdig-agent
     - traceable-ai
 
+  # Per-cluster queries add container_name!="<name>" for each entry.
+  exclude_containers:
+    - istio-proxy
+
   # Server-side aggregation: query becomes `<op> by (<by>) (<selector>)`,
   # or `<op> by (<by>) (<fn>(<selector>[<step>s]))` when a time function is set below.
   # Verified exact vs. the raw sum (difference ~1e-10 relative) on 2026-10-14.

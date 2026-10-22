@@ -25,13 +25,13 @@ def build_queries(cfg: dict, metric: str, cluster: str, step_seconds: int) -> di
     """Return {label: promql}, from the exact pipeline query down to the bare metric."""
     prom_conf = cfg.get("prometheus", {})
     agg = Aggregation.from_config(prom_conf.get("aggregation"))
-    exclude_namespaces = prom_conf.get("exclude_namespaces") or []
+    excludes = (prom_conf.get("exclude_namespaces") or [], prom_conf.get("exclude_containers") or [])
     all_clusters = cluster == ALL_CLUSTERS
     queries = {
-        "pipeline query (as sent)": agg.wrap(cluster_selector(metric, None if all_clusters else cluster, exclude_namespaces), metric, step_seconds),
+        "pipeline query (as sent)": agg.wrap(cluster_selector(metric, None if all_clusters else cluster, *excludes), metric, step_seconds),
     }
     if not all_clusters:
-        queries["no aggregation"] = cluster_selector(metric, cluster, exclude_namespaces)
+        queries["no aggregation"] = cluster_selector(metric, cluster, *excludes)
         queries["cluster only (no namespace/container exclusions)"] = f'{metric}{{agent_tag_cluster="{cluster}"}}'
     queries["metric exists at all"] = f"count({metric})"
     queries["clusters reporting this metric"] = f"count by (agent_tag_cluster) ({metric})"

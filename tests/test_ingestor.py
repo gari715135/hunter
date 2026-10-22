@@ -37,12 +37,13 @@ class StubClient:
         return PromResponse(data=self.outcome, status_code=200, attempts=1, elapsed_ms=12, response_bytes=100)
 
 
-def make_ingestor(capture, outcome, exclude_namespaces=None):
+def make_ingestor(capture, outcome, exclude_namespaces=None, exclude_containers=None):
     config = {
         "prometheus": {
             "bearer_token": "token",
             "url": "https://example.test",
             "exclude_namespaces": exclude_namespaces,
+            "exclude_containers": exclude_containers,
             "aggregation": {
                 "op": "sum",
                 "metrics": [METRIC],
@@ -105,23 +106,23 @@ def test_success_result_and_quality_counters(capture):
     assert "quality" not in fields and fields["lag_s"] == 0 and "error" not in fields
 
 
-def test_exclude_namespaces_come_from_config(capture):
-    ingestor = make_ingestor(capture, success_body(), exclude_namespaces=["", "kube-system"])
+def test_exclusions_come_from_config(capture):
+    ingestor = make_ingestor(capture, success_body(), exclude_namespaces=["", "kube-system"], exclude_containers=["istio-proxy"])
 
     ingestor.get_sysdig_metric(METRIC, "c1")
     ingestor.get_sysdig_metric(METRIC, fetch_all_clusters=True)
 
     per_cluster, all_clusters = ingestor.client.queries
     assert 'agent_tag_cluster="c1",kube_namespace_name!="",kube_namespace_name!="kube-system",container_name!="istio-proxy"' in per_cluster
-    assert "kube_namespace_name" not in all_clusters
+    assert "kube_namespace_name" not in all_clusters and "container_name" not in all_clusters
 
 
-def test_no_exclude_namespaces_configured(capture):
+def test_no_exclusions_configured(capture):
     ingestor = make_ingestor(capture, success_body())
 
     ingestor.get_sysdig_metric(METRIC, "c1")
 
-    assert "kube_namespace_name" not in ingestor.client.queries[0]
+    assert '{agent_tag_cluster="c1"}' in ingestor.client.queries[0]
 
 
 def test_query_error_becomes_failed_result(capture):
