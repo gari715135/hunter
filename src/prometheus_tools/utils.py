@@ -1,12 +1,18 @@
 # ./src/prometheus_tools/utils.py
 import io
 import re
+import time
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+
+def elapsed_ms(start: float) -> int:
+    """Milliseconds since `start`, a time.monotonic() reading."""
+    return int((time.monotonic() - start) * 1000)
 
 
 def get_app_cmdb_cols(df: pd.DataFrame, pattern: re.Pattern) -> list:

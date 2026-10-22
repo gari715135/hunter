@@ -98,6 +98,7 @@ run:
   fetch_all_clusters_at_once: false
 
 logging:
+  app: "hunt-fetch"  # "app" field on every JSON event; "version" comes from the APP_VERSION env var
   root_level: "INFO"
   console_level: "INFO"
   file_level: "DEBUG"
@@ -124,6 +125,12 @@ logging:
       enabled: false
       colored: false  # Will only apply when storage.backend == "local"
 
+    # Structured (same format as the files) to stdout, for container log collection (e.g. EKS).
+    # Off on EC2, where the Splunk forwarder tails the mounted log directory.
+    stdout:
+      enabled: false
+
   format:
+    type: "json"  # "json" (one JSON object per line, for Splunk) or "kv" (legacy key=value, uses `detailed`)
     detailed: "timestamp=%(asctime)s level=%(levelname)s logger=%(name)s correlation_id=%(correlation_id)s job_id=%(job_id)s thread=%(threadName)s message=\"%(message)s\""
     console: "%(asctime)s [%(levelname)-8s] %(name)-30s | %(message)s"

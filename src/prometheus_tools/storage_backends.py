@@ -1,10 +1,22 @@
 # ./src/prometheus_tools/storage_backends.py
 import os
+import time
 from abc import ABC, abstractmethod
 from logging import Logger
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
+
+from src.prometheus_tools.utils import elapsed_ms
+
+
+class StorageWriteError(RuntimeError):
+    """A write to the storage backend failed; carries the destination path."""
+
+    def __init__(self, path: str, cause: Exception):
+        super().__init__(f"Failed to write {path}: {type(cause).__name__}: {cause}")
+        self.path = path
 
 
 class StorageBackend(ABC):
@@ -49,8 +61,24 @@ class S3Backend(StorageBackend):
         path_parts = path[5:].split("/", 1)
         bucket = path_parts[0]
         key = path_parts[1] if len(path_parts) > 1 else ""
-        self.logger.info(f"Saving to s3://{bucket}/{key}")
-        self.s3_client.put_object(Bucket=bucket, Key=key, Body=body)
+
+        start_time = time.monotonic()
+        try:
+            response = self.s3_client.put_object(Bucket=bucket, Key=key, Body=body)
+        except (ClientError, BotoCoreError) as e:
+            raise StorageWriteError(path, e) from e
+
+        self.logger.debug(
+            "Object written",
+            extra={
+                "event": "storage_write",
+                "backend": "s3",
+                "path": path,
+                "bytes": len(body),
+                "write_ms": elapsed_ms(start_time),
+                "etag": response.get("ETag", "").strip('"'),
+            },
+        )
 
     def build_path(
         self,
@@ -109,7 +137,9 @@ class LocalBackend(StorageBackend):
     def __init__(self, logger: Logger, parent_dir: str):
         super().__init__(logger)
         self.parent_dir = Path(parent_dir).resolve()
-        self.logger.debug(f"LocalBackend initialized with parent_dir={self.parent_dir}")
+        self.logger.debug(
+            "LocalBackend initialized", extra={"event": "storage_init", "backend": "local", "parent_dir": str(self.parent_dir)}
+        )
 
     def put_object(self, path: str, body: bytes) -> None:
         """
@@ -121,14 +151,27 @@ class LocalBackend(StorageBackend):
         """
         file_path = Path(path)
 
-        # Create parent directories
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        start_time = time.monotonic()
+        try:
+            # Create parent directories
+            file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # self.logger.info(f"Saving to local file: {file_path}")
+            # Write bytes to file
+            with open(file_path, "wb") as f:
+                f.write(body)
+        except OSError as e:
+            raise StorageWriteError(path, e) from e
 
-        # Write bytes to file
-        with open(file_path, "wb") as f:
-            f.write(body)
+        self.logger.debug(
+            "Object written",
+            extra={
+                "event": "storage_write",
+                "backend": "local",
+                "path": path,
+                "bytes": len(body),
+                "write_ms": elapsed_ms(start_time),
+            },
+        )
 
     def build_path(
         self,
