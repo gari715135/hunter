@@ -2,21 +2,24 @@
 from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, Iterable, Optional, Tuple
 
-EXCLUDE_CONTAINERS = ["istio-proxy"]
-
 TIME_FUNCTIONS = {"sum_over_time", "avg_over_time", "max_over_time", "min_over_time", "count_over_time"}
 
 
-def cluster_selector(metric_name: str, cluster: Optional[str], exclude_namespaces: Iterable[str] = ()) -> str:
+def cluster_selector(
+    metric_name: str,
+    cluster: Optional[str],
+    exclude_namespaces: Iterable[str] = (),
+    exclude_containers: Iterable[str] = (),
+) -> str:
     """Selector for one cluster with the namespace/container exclusions; bare metric when cluster is None.
 
-    `exclude_namespaces` comes from prometheus.exclude_namespaces in config.yaml.
+    The exclusions come from prometheus.exclude_namespaces / exclude_containers in config.yaml.
     """
     if cluster is None:
         return metric_name
     matchers = [f'agent_tag_cluster="{cluster}"']
     matchers += [f'kube_namespace_name!="{ns}"' for ns in exclude_namespaces]
-    matchers += [f'container_name!="{cn}"' for cn in EXCLUDE_CONTAINERS]
+    matchers += [f'container_name!="{cn}"' for cn in exclude_containers]
     return f"{metric_name}{{{','.join(matchers)}}}"
 
 
