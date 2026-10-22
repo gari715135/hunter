@@ -6,7 +6,8 @@ import pytest
 from src.prometheus_tools.client import PromQueryError, PromResponse
 from src.prometheus_tools.prom_ingestor import PromDataIngester
 from src.prometheus_tools.storage_backends import (StorageBackend,
-                                                   StorageWriteError)
+                                                   StorageWriteError,
+                                                   partition_parts)
 
 METRIC = "sysdig_connection_net_out_bytes"
 START, STOP, STEP = 1_000, 1_100, 10  # 11 expected points per series
@@ -21,7 +22,7 @@ class MemoryStorage(StorageBackend):
         self.objects[path] = body
 
     def build_path(self, base_path, data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters=False):
-        return f"{base_path}/{data_type}/metric={metric_name}/cluster={cluster}/dt={folder}/{fname}{file_ext}"
+        return "/".join([base_path, *partition_parts(data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters)])
 
 
 class StubClient:

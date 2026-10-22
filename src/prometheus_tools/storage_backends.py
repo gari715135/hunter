@@ -19,6 +19,23 @@ class StorageWriteError(RuntimeError):
         self.path = path
 
 
+def partition_parts(
+    data_type: str,
+    metric_name: str,
+    cluster: str,
+    folder: str,
+    fname: str,
+    file_ext: str,
+    fetch_all_clusters: bool = False,
+) -> list:
+    """Hive-style path segments: <data_type>/metric=<m>/[cluster=<c>/]dt=<folder>/<fname><ext>."""
+    parts = [data_type, f"metric={metric_name}"]
+    if not fetch_all_clusters:
+        parts.append(f"cluster={cluster}")
+    parts += [f"dt={folder}", f"{fname}{file_ext}"]
+    return parts
+
+
 class StorageBackend(ABC):
     """Abstract base class for storage backends."""
 
@@ -109,25 +126,7 @@ class S3Backend(StorageBackend):
         bucket = path_parts[0]
         prefix = path_parts[1].rstrip("/") if len(path_parts) > 1 else ""
 
-        # Build key path
-        if fetch_all_clusters:
-            key = os.path.join(
-                prefix,
-                data_type,
-                f"metric={metric_name}",
-                f"dt={folder}",
-                f"{fname}{file_ext}",
-            )
-        else:
-            key = os.path.join(
-                prefix,
-                data_type,
-                f"metric={metric_name}",
-                f"cluster={cluster}",
-                f"dt={folder}",
-                f"{fname}{file_ext}",
-            )
-
+        key = os.path.join(prefix, *partition_parts(data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters))
         return f"s3://{bucket}/{key}"
 
 
@@ -184,24 +183,7 @@ class LocalBackend(StorageBackend):
         file_ext: str,
         fetch_all_clusters: bool = False,
     ) -> str:
-        # Build relative path from base_path
-        if fetch_all_clusters:
-            rel_path = os.path.join(
-                base_path,
-                data_type,
-                f"metric={metric_name}",
-                f"dt={folder}",
-                f"{fname}{file_ext}",
-            )
-        else:
-            rel_path = os.path.join(
-                base_path,
-                data_type,
-                f"metric={metric_name}",
-                f"cluster={cluster}",
-                f"dt={folder}",
-                f"{fname}{file_ext}",
-            )
+        rel_path = os.path.join(base_path, *partition_parts(data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters))
 
         # Combine with parent directory to get absolute path
         full_path = self.parent_dir / rel_path
