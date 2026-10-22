@@ -19,6 +19,7 @@ The original detection goal was catching SYN-level activity such as scans. It do
 - `config.yaml` is the source of truth for `prometheus.aggregation.by` (38 labels) and `prometheus.aggregation.time_functions`.
 - `src/prometheus_tools/` holds `prom_ingestor.py`, `utils.py` and `orchestrator.py`.
 - `scripts/` holds `fetch_data.py`, `glue_combine_conformed.py`, and the profiling scripts `profile_parquet.py` and `profile_s3_footers.py` (the latter reads only Parquet footers, so it is cheap across many S3 files).
+- `scripts/fetch_data.py` reads the Sysdig token from AWS Secrets Manager (`hunt/sysdig/monitor`) by default. For local testing without AWS secrets access, run `python -m scripts.fetch_data --local`: the token comes from the `SYSDIG_MONITOR_API_TOKEN` environment variable, falling back to `.env` in the project root (or the file passed with `--env-file`). Local mode only changes where the token comes from; the S3 storage backend still needs AWS credentials, so set `storage.backend: "local"` to avoid AWS entirely.
 - `docker/` holds two separate Dockerfiles, one for fetch and one for the beacon detector. Build with `docker build -f`. The detector image follows the org's corporate proxy and IMDS-bypass conventions.
 - `.bak` files hold the originals from before any changes, and `.bak2` files hold the versions from before the 2026-10-20 query change.
 - `hunt-connection-metric-fields.md` holds the full label list, query shape and validation results.
