@@ -156,7 +156,8 @@ def build_formatter(logging_cfg: dict) -> logging.Formatter:
     if formats.get("type", "json") == "json":
         return JsonFormatter(
             app=logging_cfg.get("app", "hunt-fetch"),
-            version=os.environ.get("APP_VERSION", "unknown"),
+            # Manually bumped logging.version in config; APP_VERSION env var overrides it if set
+            version=os.environ.get("APP_VERSION") or str(logging_cfg.get("version", "unknown")),
         )
     detailed_format = formats.get(
         "detailed",

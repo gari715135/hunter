@@ -75,6 +75,14 @@ def test_non_serializable_extras_are_stringified(capture):
     assert isinstance(event["obj"], str) and isinstance(event["items"], str)
 
 
+def test_version_from_config_env_overrides(monkeypatch):
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    assert build_formatter({"version": "1.4"}).version == "1.4"
+    assert build_formatter({}).version == "unknown"
+    monkeypatch.setenv("APP_VERSION", "2.0")
+    assert build_formatter({"version": "1.4"}).version == "2.0"
+
+
 def test_kv_format_still_available():
     formatter = build_formatter({"format": {"type": "kv"}})
     assert "%(correlation_id)s" in formatter._fmt

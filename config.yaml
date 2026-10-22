@@ -98,7 +98,8 @@ run:
   fetch_all_clusters_at_once: false
 
 logging:
-  app: "hunt-fetch"  # "app" field on every JSON event; "version" comes from the APP_VERSION env var
+  app: "hunt-fetch"  # "app" field on every JSON event
+  version: "1.0.0"   # "version" field on every JSON event; bump on each release (APP_VERSION env var overrides)
   root_level: "INFO"
   console_level: "INFO"
   file_level: "DEBUG"
