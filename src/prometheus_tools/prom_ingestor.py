@@ -2,29 +2,18 @@
 import gzip
 import io
 import json
-import re
 import time
 from dataclasses import asdict, dataclass, field
 from logging import Logger
-from typing import Dict, List, Optional, Tuple
-
-import numpy as np
-import pandas as pd
+from typing import Dict, List, Optional
 
 from src.prometheus_tools.client import PrometheusClient, PromQueryError
+from src.prometheus_tools.promql import Aggregation, cluster_selector
 from src.prometheus_tools.storage_backends import (StorageBackend,
                                                    StorageWriteError)
-from src.prometheus_tools.utils import (df_to_parquet_bytes,
-                                         drop_sparse_columns, elapsed_ms,
-                                         get_app_cmdb_cols,
+from src.prometheus_tools.transform import response_to_frame
+from src.prometheus_tools.utils import (df_to_parquet_bytes, elapsed_ms,
                                          get_timestamp_parts)
-
-CMDB_RE = re.compile(r"label_A\d{5,}")
-
-# fmt: off
-EXCLUDE_NAMESPACES = ["", "amazon-guardduty", "domino-platform", "dynatrace", "istio-system", "kube-system", "monitoring", "redis", "splunk", "sysdig-agent", "traceable-ai"]
-EXCLUDE_CONTAINERS = ["istio-proxy"]
-# fmt: on
 
 
 @dataclass
@@ -51,7 +40,7 @@ class JobResult:
     error_type: Optional[str] = None
     error: Optional[str] = None
     body_preview: Optional[str] = None
-    # Data-quality counters from _process_single_result (samples, gaps, lag, NaNs, ...)
+    # Data-quality counters from transform.response_to_frame (samples, gaps, lag, NaNs, ...)
     quality: dict = field(default_factory=dict)
 
     def as_fields(self) -> dict:
@@ -75,17 +64,7 @@ class PromDataIngester:
         )
 
         # Optional server-side aggregation (see prometheus.aggregation in config.yaml)
-        agg = prom_conf.get("aggregation") or {}
-        self.agg_op = agg.get("op", "sum")
-        self.agg_by: List[str] = list(agg.get("by") or [])
-        self.agg_metrics = set(agg.get("metrics") or [])
-        if self.agg_metrics and not self.agg_by:
-            raise ValueError("prometheus.aggregation.metrics is set but aggregation.by is empty")
-        self.agg_time_fns = dict(agg.get("time_functions") or {})
-        allowed = {"sum_over_time", "avg_over_time", "max_over_time", "min_over_time", "count_over_time"}
-        bad = {m: f for m, f in self.agg_time_fns.items() if f not in allowed or m not in self.agg_metrics}
-        if bad:
-            raise ValueError(f"Invalid aggregation.time_functions (unknown function or metric not in aggregation.metrics): {bad}")
+        self.aggregation = Aggregation.from_config(prom_conf.get("aggregation"))
 
         qp = config.get("query_params", {})
         self.t_start = qp["start"]
@@ -99,9 +78,9 @@ class PromDataIngester:
                 "event": "ingestor_configured",
                 **self.window_fields(),
                 "base_path": self.base_path,
-                "aggregated_metrics": sorted(self.agg_metrics),
-                "time_functions": self.agg_time_fns,
-                "aggregation_labels": len(self.agg_by),
+                "aggregated_metrics": sorted(self.aggregation.metrics),
+                "time_functions": self.aggregation.time_functions,
+                "aggregation_labels": len(self.aggregation.by),
             },
         )
 
@@ -147,128 +126,22 @@ class PromDataIngester:
             extra={"event": "raw_payload_saved", "path": path, "bytes": len(body), "write_ms": write_ms},
         )
 
-    def _is_aggregated(self, metric_name: str) -> bool:
-        return metric_name in self.agg_metrics
-
-    def _wrap_aggregation(self, q: str, metric_name: str) -> str:
-        if not self._is_aggregated(metric_name):
-            return q
-        fn = self.agg_time_fns.get(metric_name)
-        if fn:
-            # Window == step so consecutive windows tile the timeline exactly.
-            q = f"{fn}({q}[{self.step_seconds}s])"
-        return f"{self.agg_op} by ({', '.join(self.agg_by)}) ({q})"
-
-    def _conform_aggregated(self, df: pd.DataFrame, metric_name: str) -> Tuple[pd.DataFrame, List[str]]:
-        """Fixed schema for aggregated metrics: same columns, order and types in every file.
-
-        Prometheus omits labels whose value is empty, so a label can be absent for a whole
-        fetch; add it as an all-null *string* column so parquet types never drift between
-        files (an all-null object column would be written as Arrow `null` and the Glue
-        schema check would skip the file).
-
-        Returns the conformed frame and the allowlisted labels that were null for the whole fetch.
-        """
-        label_cols = [f"metric.{lbl}" for lbl in self.agg_by]
-        df["metric.__name__"] = metric_name  # aggregation drops __name__
-        extra = sorted(set(df.columns) - set(label_cols) - {"metric.__name__", "time", "value"})
-        if extra:
-            self.logger.warning(
-                "Unexpected columns after aggregation dropped",
-                extra={"event": "unexpected_columns_dropped", "dropped_columns": extra},
-            )
-        df = df.reindex(columns=["metric.__name__", *label_cols, "time", "value"])
-        null_labels = [lbl for lbl, col in zip(self.agg_by, label_cols) if df[col].isna().all()]
-        str_cols = ["metric.__name__", *label_cols]
-        df[str_cols] = df[str_cols].astype("string")
-        return df, null_labels
-
-    def _series_stats(self, values: pd.Series) -> dict:
-        """Sample counts, gaps and lag, from the per-series [[ts, "v"], ...] lists."""
-        step = self.step_seconds
-        expected = (self.t_stop - self.t_start) // step + 1
-        # Last timestamp a range query can return: start + k*step <= stop
-        last_possible = self.t_start + (expected - 1) * step
-
-        lens = values.map(len)
-        first = values.map(lambda v: float(v[0][0]))
-        last = values.map(lambda v: float(v[-1][0]))
-        # Points missing between a series' own first and last sample. Short-lived connections
-        # naturally don't span the whole window, so that alone is not counted as a gap.
-        span_points = ((last - first) / step).round().astype("int64") + 1
-        missing = (span_points - lens).clip(lower=0)
-        last_ts = int(last.max())
-
-        return {
-            "samples": int(lens.sum()),
-            "expected_samples_per_series": int(expected),
-            "series_full_window": int((lens >= expected).sum()),
-            "series_with_gaps": int((missing > 0).sum()),
-            "missing_points": int(missing.sum()),
-            "first_ts": int(first.min()),
-            "last_ts": last_ts,
-            "lag_s": int(last_possible - last_ts),
-        }
-
-    def _process_single_result(self, result: dict, metric_name: str = None) -> Tuple[pd.DataFrame, dict]:
-        """Prometheus range-query JSON -> (DataFrame, data-quality counters)."""
-        quality = {}
-
-        result_list = result.get("data", {}).get("result", [])
-        if not result_list:
-            return pd.DataFrame(), quality
-
-        df = pd.json_normalize(result_list)
-
-        if df.empty:
-            self.logger.debug("DataFrame empty after normalization", extra={"event": "normalize_empty"})
-            return pd.DataFrame(), quality
-
-        quality.update(self._series_stats(df["values"]))
-        df = df.explode("values", ignore_index=True)
-
-        v = np.asarray(df["values"].tolist(), dtype="object")
-        if v.size == 0:
-            self.logger.debug("No values to process after explosion", extra={"event": "explode_empty"})
-            return pd.DataFrame(), quality
-
-        df["time"] = pd.to_datetime(v[:, 0], unit="s", utc=True, errors="coerce")
-        df["value"] = pd.to_numeric(v[:, 1], errors="coerce").astype('float64')
-        df = df.drop(columns=["values"])
-
-        # Values/timestamps that could not be parsed (or were "NaN" in the payload)
-        quality["nan_values"] = int(df["value"].isna().sum())
-        quality["nat_times"] = int(df["time"].isna().sum())
-        if self.agg_time_fns.get(metric_name) == "sum_over_time":
-            # sum_over_time of ~1s readings must be whole numbers; anything else means averaged data
-            values = df["value"].dropna().to_numpy()
-            quality["non_integer_values"] = int(np.count_nonzero(np.mod(values, 1)))
-
-        if metric_name and self._is_aggregated(metric_name):
-            df, null_labels = self._conform_aggregated(df, metric_name)
-            quality["null_label_cols"] = null_labels
-            quality["null_label_count"] = len(null_labels)
-            return df, quality
-
-        # Drop sparse columns
-        cols_before = len(df.columns)
-        df = drop_sparse_columns(df, na_ratio=0.1)
-        cols_dropped = cols_before - len(df.columns)
-
-        if cols_dropped > 0:
-            self.logger.debug("Dropped sparse columns", extra={"event": "sparse_columns_dropped", "count": cols_dropped})
-
-        # Drop CMDB columns
-        cmdb_cols = get_app_cmdb_cols(df, CMDB_RE)
-        if cmdb_cols:
-            df = df.drop(columns=cmdb_cols)
-            self.logger.debug("Dropped CMDB columns", extra={"event": "cmdb_columns_dropped", "count": len(cmdb_cols)})
-
-        return df, quality
+    def _to_frame(self, raw: dict, metric_name: str):
+        aggregated = self.aggregation.applies_to(metric_name)
+        return response_to_frame(
+            raw,
+            metric_name=metric_name,
+            start=self.t_start,
+            stop=self.t_stop,
+            step=self.step_seconds,
+            logger=self.logger,
+            labels=self.aggregation.by if aggregated else None,
+            time_function=self.aggregation.time_function(metric_name),
+        )
 
     def _save_tabular_data(self, result: JobResult, raw: dict, fetch_all_clusters: bool = False):
         start_time = time.monotonic()
-        df, quality = self._process_single_result(raw, metric_name=result.metric)
+        df, quality = self._to_frame(raw, result.metric)
         result.quality.update(quality)
 
         if df.empty:
@@ -368,20 +241,14 @@ class PromDataIngester:
         save_cluster_name = "all_clusters" if fetch_all_clusters else cluster_name
         result = JobResult(metric=metric_name, cluster=save_cluster_name)
 
-        q = f"{metric_name}"
-        if not fetch_all_clusters:
-            agent_tag_cluster_str = f'agent_tag_cluster="{cluster_name}"'
-            namespace_exclusions = ",".join([f'kube_namespace_name!="{ns}"' for ns in EXCLUDE_NAMESPACES])
-            container_exclusions = ",".join([f'container_name!="{cn}"' for cn in EXCLUDE_CONTAINERS])
-            q = f"{metric_name}{{{agent_tag_cluster_str},{namespace_exclusions},{container_exclusions}}}"
-
-        q = self._wrap_aggregation(q, metric_name)
+        selector = cluster_selector(metric_name, None if fetch_all_clusters else cluster_name)
+        q = self.aggregation.wrap(selector, metric_name, self.step_seconds)
         self.logger.info(
             "Querying metric",
             extra={
                 "event": "prom_query_started",
-                "aggregated": self._is_aggregated(metric_name),
-                "time_function": self.agg_time_fns.get(metric_name),
+                "aggregated": self.aggregation.applies_to(metric_name),
+                "time_function": self.aggregation.time_function(metric_name),
             },
         )
         self.logger.debug("PromQL query", extra={"event": "prom_query", "query": q})
