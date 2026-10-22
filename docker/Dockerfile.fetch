@@ -1,0 +1,35 @@
+# Dockerfile
+# Use python 'slim'
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Set proxy for build steps (pip installs, apt, etc.)
+ENV HTTPS_PROXY="http://proxy.ops.tiaa-cref.org:8080"
+ENV HTTP_PROXY="http://proxy.ops.tiaa-cref.org:8080"
+ENV no_proxy="169.254.169.254"
+
+# Copy requirements file
+COPY requirementsV3.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirementsV3.txt
+
+# Copy application code
+COPY src/ ./src/
+COPY scripts/ ./scripts/
+COPY config.yaml .
+
+# Create directory for local storage (will be mounted)
+RUN mkdir -p /data
+
+# Clear proxies at runtime but preserve metadata service bypass
+ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="169.254.169.254" no_proxy="169.254.169.254"
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Run the fetch script - use python -m to ensure proper module resolution
+CMD ["python", "-m", "scripts.fetch_data"]
