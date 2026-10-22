@@ -1,4 +1,5 @@
 # ./scripts/fetch_data.py
+import argparse
 import json
 import logging
 import os
@@ -69,6 +70,51 @@ def load_yaml_config(path: str = "config.yaml") -> dict:
     return cfg
 
 
+def read_env_file(path) -> dict:
+    """Parse KEY=VALUE lines from an env file (comments, blank lines and `export ` are allowed)."""
+    values = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.removeprefix("export ").split("=", 1)
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                value = value[1:-1]
+            values[key.strip()] = value
+    return values
+
+
+def get_local_token(secret_key="SYSDIG_MONITOR_API_TOKEN", env_file=None) -> str | None:
+    """Read the token from the environment, falling back to an env file (default: <project root>/.env)."""
+    token = os.environ.get(secret_key)
+    if token:
+        return token
+
+    env_path = Path(env_file) if env_file else Path(PROJECT_ROOT) / ".env"
+    if env_path.exists():
+        return read_env_file(env_path).get(secret_key)
+    return None
+
+
+def inject_local_bearer_token(cfg: dict, logger, env_file=None) -> None:
+    """Inject bearer token from an environment variable or env file (local mode, no AWS access needed)."""
+    logger.info("Loading bearer token from environment (local mode)")
+
+    token = get_local_token("SYSDIG_MONITOR_API_TOKEN", env_file)
+
+    if not token:
+        logger.critical("No bearer token available in environment or env file")
+        raise ValueError(
+            "No bearer token found. Set SYSDIG_MONITOR_API_TOKEN in the environment or in "
+            f"{env_file or Path(PROJECT_ROOT) / '.env'}"
+        )
+
+    cfg["prometheus"]["bearer_token"] = token
+    logger.info("Bearer token loaded successfully")
+
+
 def inject_bearer_token(cfg: dict, logger) -> None:
     """Inject bearer token into configuration."""
     logger.info("Loading bearer token from AWS Secrets Manager")
@@ -107,8 +153,8 @@ def calculate_time_window(cfg: dict, logger) -> None:
     )
 
 
-def load_config(path: str = None) -> dict:
-    """Load and prepare configuration."""
+def load_config(path: str = None, local: bool = False, env_file: str = None) -> dict:
+    """Load and prepare configuration. With local=True the token comes from the environment, not AWS."""
     # Use temporary logger for config loading
     temp_logger = get_logger("config")
 
@@ -126,7 +172,10 @@ def load_config(path: str = None) -> dict:
         temp_logger.critical(f'Failed to load configuration error="{e}"')
         raise
 
-    inject_bearer_token(cfg, temp_logger)
+    if local:
+        inject_local_bearer_token(cfg, temp_logger, env_file)
+    else:
+        inject_bearer_token(cfg, temp_logger)
     calculate_time_window(cfg, temp_logger)
 
     return cfg
@@ -193,6 +242,20 @@ def init_ingestor(cfg: dict, loggers: dict) -> PromDataIngester:
     return PromDataIngester(cfg, ingestor_logger, storage_backend, client_logger=loggers.get("client"))
 
 
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Fetch the last hour of Sysdig metrics.")
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Read SYSDIG_MONITOR_API_TOKEN from the environment or an env file instead of AWS Secrets Manager",
+    )
+    parser.add_argument("--env-file", help="Env file to read the token from in local mode (default: <project root>/.env)")
+    args = parser.parse_args(argv)
+    if args.env_file and not args.local:
+        parser.error("--env-file requires --local")
+    return args
+
+
 def exit_code_for(summary: dict) -> int:
     """128+signal if interrupted (130 SIGINT, 143 SIGTERM), 1 if any job failed, else 0."""
     if summary.get("interrupted"):
@@ -205,8 +268,10 @@ if __name__ == "__main__":
     # Generate a run ID for this execution
     correlation_id = generate_correlation_id()
 
+    args = parse_args()
+
     # Load configuration
-    cfg = load_config()
+    cfg = load_config(local=args.local, env_file=args.env_file)
 
     # Initialize logging system
     loggers = setup_logging_system(cfg)
