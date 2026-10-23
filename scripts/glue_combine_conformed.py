@@ -2,6 +2,8 @@
 # Fault-tolerant version: inspects every parquet footer before reading,
 # skips files whose column types drift from the canonical schema,
 # writes a drift report, and fails loudly if too much data would be dropped.
+# Rows are assigned to the day of their own timestamp (not the fetch's dt folder) and
+# the overlap between consecutive hourly fetches is deduplicated, keeping the later fetch.
 import sys
 import re
 import json
@@ -13,6 +15,7 @@ from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
+from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType
 
 args = getResolvedOptions(
@@ -32,6 +35,10 @@ process_date = optional_arg(
    "PROCESS_DATE",
    (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y%m%d"),
 )
+# Folders are named for the fetch END time, so day D's last hour sits in dt=D+1
+# (the 00:00 fetch, and the 5-min overlap of the 01:00 one). Read D+1 files up to this HHMM.
+next_date = (datetime.strptime(process_date, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+NEXT_DAY_MAX_HHMM = optional_arg("NEXT_DAY_MAX_HHMM", "0200")
 
 sc = SparkContext()
 glueContext = GlueContext(sc)
@@ -41,6 +48,13 @@ job.init(args["JOB_NAME"], args)
 
 # Overwrite only the partitions in this batch; don't wipe other days/metrics/clusters
 spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+# Day assignment from `time` must be in UTC, like the fetch's dt folders
+spark.conf.set("spark.sql.session.timeZone", "UTC")
+# Keep dt a "YYYYMMDD" string instead of letting partition discovery make it an int
+spark.conf.set("spark.sql.sources.partitionColumnTypeInference.enabled", "false")
+# Write `time` as UTC INT64 micros like the conformed input, not Spark's default INT96
+# (deprecated, no row-group stats for time filters, read back as naive nanoseconds)
+spark.conf.set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
 
 source_base = args["SOURCE_BASE_PATH"].rstrip("/")
 output_base = args["OUTPUT_BASE_PATH"].rstrip("/")
@@ -54,11 +68,14 @@ DRIFT_REPORT_BASE = optional_arg(
 ).rstrip("/")
 # Optional pinned schema, e.g. '{"value": "double", "count": "int64"}'
 # (Arrow type names). If omitted, the majority type per column wins.
+# Generate it with scripts/glue_expected_schema.py. When pinned, the output keeps only these columns.
 EXPECTED_SCHEMA_JSON = optional_arg("EXPECTED_SCHEMA_JSON", "")
+# A day with no input files fails the job unless this is "true".
+ALLOW_EMPTY = optional_arg("ALLOW_EMPTY", "false").lower() == "true"
 
 conformed_root = f"{source_base}/conformed"
-# dt= is the LEAF level: conformed/metric=*/cluster=*/dt=YYYYMMDD/
-glob_path = f"{conformed_root}/metric=*/cluster=*/dt={process_date}"
+# dt= is the LEAF level: conformed/metric=*/cluster=*/dt=YYYYMMDD/HHMM.parquet
+glob_path = f"{conformed_root}/metric=*/cluster=*/dt={{{process_date},{next_date}}}"
 print(f"Scanning conformed parquet under {glob_path}")
 
 
@@ -81,13 +98,34 @@ def list_parquet_files(pattern_str):
    return found
 
 
-files = list_parquet_files(glob_path)
-print(f"Found {len(files)} parquet files for dt={process_date}")
+# .../dt=YYYYMMDD/HHMM.parquet -> fetch end time, used to prefer the later fetch in overlaps
+FETCH_RE = re.compile(r"/dt=(\d{8})/(\d{4})[^/]*$")
 
-if not files:
-   print("No conformed files found for this date. Exiting without writing.")
+
+def wanted(path):
+   """All of dt=D; from dt=D+1 only the early fetches that can still hold day D rows."""
+   if f"/dt={next_date}/" not in path:
+       return True
+   m = FETCH_RE.search(path)
+   return bool(m) and m.group(2) <= NEXT_DAY_MAX_HHMM
+
+
+files = [f for f in list_parquet_files(glob_path) if wanted(f[0])]
+day_files = sum(f"/dt={process_date}/" in p for p, _ in files)
+print(f"Found {day_files} parquet files in dt={process_date} and "
+     f"{len(files) - day_files} in dt={next_date} up to {NEXT_DAY_MAX_HHMM}")
+
+if not day_files:
+   msg = f"No conformed files found for dt={process_date} under {glob_path}"
+   if not ALLOW_EMPTY:
+       # A missing day means the fetch (or the paths) broke; don't let it pass as green.
+       raise RuntimeError(f"{msg}. Set ALLOW_EMPTY=true to exit cleanly instead.")
+   print(f"{msg}. Exiting without writing.")
    job.commit()
    sys.exit(0)
+if day_files == len(files):
+   print(f"  WARNING: nothing from dt={next_date} yet, so the last hour of {process_date} "
+         f"will be missing. Rerun after the 00:00 fetch has landed.")
 
 
 # --- 2. Read only the footers, in parallel on the executors ----------------
@@ -204,10 +242,13 @@ for path, cols, _, err in inspected:
            issues.append(issue(path, "TYPE_CONFLICT", "SKIPPED", c, t, exp))
        continue
    if EXPECTED_SCHEMA_JSON:
-       # New columns merge fine (nulls elsewhere); report but keep the file.
+       # The file is kept either way; the output only carries the pinned columns.
        for c in cols:
            if c not in canonical:
-               issues.append(issue(path, "NEW_COLUMN", "KEPT", c, cols[c]))
+               issues.append(issue(path, "NEW_COLUMN", "COLUMN_DROPPED", c, cols[c]))
+       for c in canonical:
+           if c not in cols:
+               issues.append(issue(path, "MISSING_COLUMN", "KEPT", c, None, canonical[c]))
    good_files.append(path)
 
 skipped = len(files) - len(good_files)
@@ -253,23 +294,88 @@ if not good_files:
 
 
 # --- 6. Read only the clean files (basePath still recovers partition cols) --
+def col(name):
+   # Label columns are named "metric.<label>"; unquoted, Spark reads that as field <label>
+   # of the `metric` partition column.
+   return F.col(f"`{name}`")
+
+
 df = (
    spark.read.option("basePath", conformed_root)
    .option("mergeSchema", "true")
    .parquet(*good_files)
+   # Fetch end time from the file path (YYYYMMDDHHMM), so overlaps can prefer the later fetch
+   .withColumn(
+       "_fetch",
+       F.concat(
+           F.regexp_extract(F.input_file_name(), FETCH_RE.pattern, 1),
+           F.regexp_extract(F.input_file_name(), FETCH_RE.pattern, 2),
+       ),
+   )
+   # Assign rows to the day of their own timestamp, not the fetch's dt folder
+   .filter(F.date_format("time", "yyyyMMdd") == process_date)
+   .drop("dt")
 )
 
-row_count = df.count()
-print(f"Combined row count for dt={process_date}: {row_count}")
+if EXPECTED_SCHEMA_JSON:
+   # Pinned: drop unexpected columns (reported as NEW_COLUMN above)
+   df = df.select(*[col(c) for c in canonical if c in df.columns], "metric", "cluster", "_fetch")
 
-if row_count == 0:
+data_cols = [c for c in df.columns if c != "_fetch"]
+key_cols = [c for c in data_cols if c != "value"]
+
+
+# --- 7. Drop the overlap between consecutive fetches ------------------------
+# Hourly fetches overlap by 5 minutes. A row is one series (every label) at one timestamp;
+# when several fetches returned it, keep the value from the latest fetch, which had the
+# most time for Sysdig to finish ingesting it.
+deduped = (
+   df.groupBy(*[col(c) for c in key_cols])
+   .agg(
+       F.expr("max_by(value, _fetch)").alias("value"),
+       F.count(F.lit(1)).alias("_copies"),
+       (F.min("value") != F.max("value")).alias("_conflict"),
+   )
+   .persist()
+)
+
+summary = (
+   deduped.groupBy("metric", "cluster")
+   .agg(
+       F.sum("_copies").alias("rows_in"),
+       F.count(F.lit(1)).alias("rows_out"),
+       F.sum(F.col("_conflict").cast("int")).alias("conflicting"),
+   )
+   .collect()
+)
+rows_in = sum(r["rows_in"] for r in summary)
+rows_out = sum(r["rows_out"] for r in summary)
+print(f"Rows for dt={process_date}: {rows_in} read, {rows_out} after dropping "
+     f"{rows_in - rows_out} overlap duplicates")
+
+if rows_out == 0:
    print("No conformed rows found for this date. Exiting without writing.")
    job.commit()
    sys.exit(0)
 
+by_metric = defaultdict(lambda: [0, 0, 0])
+for r in summary:
+   totals = by_metric[r["metric"]]
+   totals[0] += r["rows_in"]
+   totals[1] += r["rows_out"]
+   totals[2] += r["conflicting"] or 0
+for metric, (n_in, n_out, n_conflict) in sorted(by_metric.items()):
+   print(f"  {metric}: {n_in} -> {n_out} rows, {n_conflict} kept from the later fetch "
+         f"because the copies' values differed")
+# Differing copies mean the earlier fetch saw incomplete data (Sysdig ingestion lag)
+for r in sorted(summary, key=lambda r: -(r["conflicting"] or 0))[:20]:
+   if r["conflicting"]:
+       print(f"  differing copies: {r['metric']} / {r['cluster']}: {r['conflicting']}")
+
 output_path = f"{output_base}/conformed_daily/"
 (
-   df.repartition(
+   deduped.select(*[col(c) for c in data_cols], F.lit(process_date).alias("dt"))
+   .repartition(
        "metric", "cluster", "dt"
    )  # co-locate each partition's rows -> no giant per-task sort/spill
    .write.mode("overwrite")
@@ -277,6 +383,7 @@ output_path = f"{output_base}/conformed_daily/"
    .option("compression", "snappy")
    .parquet(output_path)
 )
+deduped.unpersist()
 
 print(f"Wrote combined conformed data to {output_path}")
 job.commit()

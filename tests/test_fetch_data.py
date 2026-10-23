@@ -50,3 +50,14 @@ def test_parse_args():
     assert args.local and args.env_file == "x.env"
     with pytest.raises(SystemExit):
         fetch_data.parse_args(["--env-file", "x.env"])
+
+
+def test_time_window_snaps_to_step_grid(capture):
+    # Runs that start a few seconds apart must still produce the same sample timestamps
+    for now in (1_761_000_000, 1_761_000_003, 1_761_000_009):
+        c = cfg()
+        fetch_data.calculate_time_window(c, capture.logger, now=now)
+        qp = c["query_params"]
+        assert qp["stop"] == 1_761_000_000
+        assert qp["start"] % fetch_data.STEP_SECONDS == 0
+        assert qp["stop"] - qp["start"] == fetch_data.HOUR_IN_SECONDS + fetch_data.BUFFER_SECONDS

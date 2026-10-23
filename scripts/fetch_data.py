@@ -136,9 +136,13 @@ def inject_bearer_token(cfg: dict, logger) -> None:
     logger.info("Bearer token loaded successfully")
 
 
-def calculate_time_window(cfg: dict, logger) -> None:
+def calculate_time_window(cfg: dict, logger, now: int = None) -> None:
     """Calculate and inject time window parameters."""
-    now = int(datetime.now(timezone.utc).timestamp())
+    if now is None:
+        now = int(datetime.now(timezone.utc).timestamp())
+    # Snap to the step grid so every run's samples (and *_over_time windows) land on the
+    # same timestamps, and the overlap with the previous run dedups exactly downstream.
+    now -= now % STEP_SECONDS
     start = now - (HOUR_IN_SECONDS + BUFFER_SECONDS)
 
     cfg["query_params"] = {

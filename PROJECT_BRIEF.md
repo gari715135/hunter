@@ -7,7 +7,7 @@ HUNT is a network threat-detection data pipeline for Kubernetes, plus the detect
 
 **Data flow:** Sysdig Prometheus API → `prom_ingestor.py` (hourly fetch) → S3, Hive-partitioned as `metric=/cluster=/dt=` → AWS Glue job (`glue_combine_conformed.py`) → combined Parquet → detectors.
 
-**Metrics:** `sysdig_connection_net_out_bytes` and `sysdig_connection_net_connection_out_count`, at 10-second resolution. `connection_request_count` is also fetched raw.
+**Metrics:** `sysdig_connection_net_in_bytes`, `sysdig_connection_net_out_bytes`, `sysdig_connection_net_connection_in_count` and `sysdig_connection_net_connection_out_count`, at 10-second resolution, all aggregated. Both bytes metrics use `sum_over_time`. `connection_request_count` was dropped (one cluster, almost no labels).
 
 **Detectors (separate from the pipeline):**
 - **Beacon/C2 detector (FFT-based).** `beacon_detector.py` replaced an inefficient inherited hierarchical drill-down that diluted signal and had a peak-frequency bug. It groups traffic by `(client_ip, server_ip)` and keeps only public destinations, using one global RFC1918+CGNAT filter. It runs an FFT for periodicity and reuses `SignalTransformations`. Legitimate periodic k8s traffic (Prometheus, KEDA, CSI drivers, health probes) is a known false-positive source. A baseline/allowlist of benign periodic patterns is being worked on.
@@ -18,7 +18,7 @@ The original detection goal was catching SYN-level activity such as scans. It do
 ## Repo layout
 - `config.yaml` is the source of truth for `prometheus.aggregation.by` (38 labels) and `prometheus.aggregation.time_functions`.
 - `src/prometheus_tools/` holds `prom_ingestor.py`, `utils.py` and `orchestrator.py`.
-- `scripts/` holds `fetch_data.py`, `glue_combine_conformed.py`, and the profiling scripts `profile_parquet.py` and `profile_s3_footers.py` (the latter reads only Parquet footers, so it is cheap across many S3 files).
+- `scripts/` holds `fetch_data.py`, `glue_combine_conformed.py`, `glue_expected_schema.py` (prints the Glue job's `EXPECTED_SCHEMA_JSON` arg from `config.yaml`), and the profiling scripts `profile_parquet.py` and `profile_s3_footers.py` (the latter reads only Parquet footers, so it is cheap across many S3 files).
 - `scripts/fetch_data.py` reads the Sysdig token from AWS Secrets Manager (`hunt/sysdig/monitor`) by default. For local testing without AWS secrets access, run `python -m scripts.fetch_data --local`: the token comes from the `SYSDIG_MONITOR_API_TOKEN` environment variable, falling back to `.env` in the project root (or the file passed with `--env-file`). Local mode only changes where the token comes from; the S3 storage backend still needs AWS credentials, so set `storage.backend: "local"` to avoid AWS entirely.
 - `docker/` holds two separate Dockerfiles, one for fetch and one for the beacon detector. Build with `docker build -f`. The detector image follows the org's corporate proxy and IMDS-bypass conventions.
 - `.bak` files hold the originals from before any changes, and `.bak2` files hold the versions from before the 2026-10-20 query change.
@@ -50,10 +50,7 @@ The original detection goal was catching SYN-level activity such as scans. It do
 The code changes are in place but unverified live. In order:
 1. Run one live fetch with DEBUG logging and confirm the logged query.
 2. Run the decimals check on that fetch's bytes output. It should be all whole numbers.
-3. Do the Glue work:
-   - Drop the duplicate rows from the deliberate 5-minute fetch overlap with `dropDuplicates()` on all columns.
-   - Handle the day-boundary partitioning.
-   - Deploy the schema change at a day boundary so no day mixes the old 98-column and new 41-column layouts.
+3. Deploy the updated Glue job (tested locally with PySpark on synthetic files across midnight, not yet run in AWS). It reads `dt=D` plus the early `dt=D+1` files, assigns rows to the day of their own `time`, keeps one row per series and timestamp from the latest fetch, logs duplicate and conflict counts, and writes `time` as UTC INT64 microseconds. Point `SOURCE_BASE_PATH` at the `prometheusV7` prefix and pass `EXPECTED_SCHEMA_JSON` from `scripts/glue_expected_schema.py`. Collection is restarting from scratch in V7 (a couple of weeks of data were lost when Docker was removed from the EC2 host), so deploy the snapped fetch window before collection resumes, and set `ALLOW_EMPTY=true` for any scheduled Glue run before the first full day has landed.
 
 ## Constraints and gotchas
 - **10s resolution is required for now.** It may be scaled back later.
