@@ -18,24 +18,25 @@ bollinger_analysis:
 prometheus:
   url: "https://us2.app.sysdig.com"
   metrics:
+    - sysdig_connection_net_in_bytes
     - sysdig_connection_net_out_bytes
+    - sysdig_connection_net_connection_in_count
     - sysdig_connection_net_connection_out_count
-    - connection_request_count
 
   # Per-cluster queries add kube_namespace_name!="<ns>" for each entry.
   # "" drops series with no namespace label (host-level traffic).
   exclude_namespaces:
     - ""
-    - amazon-guardduty
-    - domino-platform
-    - dynatrace
-    - istio-system
-    - kube-system
-    - monitoring
-    - redis
-    - splunk
-    - sysdig-agent
-    - traceable-ai
+    # - amazon-guardduty
+    # - domino-platform
+    # - dynatrace
+    # - istio-system
+    # - kube-system
+    # - monitoring
+    # - redis
+    # - splunk
+    # - sysdig-agent
+    # - traceable-ai
 
   # Per-cluster queries add container_name!="<name>" for each entry.
   exclude_containers:
@@ -48,7 +49,9 @@ prometheus:
   aggregation:
     op: sum
     metrics:
+      - sysdig_connection_net_in_bytes
       - sysdig_connection_net_out_bytes
+      - sysdig_connection_net_connection_in_count
       - sysdig_connection_net_connection_out_count
     # Optional per-metric time function applied to the selector before `op by`:
     #   <op> by (<by>) (<fn>(<selector>[<step>s]))
@@ -57,8 +60,9 @@ prometheus:
     # gives true bytes per step. Validated 2026-10-20: plain == avg_over_time[10s],
     # 1m sum == six 10s sums (no boundary double-count), 10s sums are whole numbers.
     # The 1s readings are only retained briefly, so this must run at fetch time (no backfill).
-    # connection_out_count is a level (currently established), so it keeps the plain value.
+    # The connection_*_count metrics are levels (currently established), so they keep the plain value.
     time_functions:
+      sysdig_connection_net_in_bytes: sum_over_time
       sysdig_connection_net_out_bytes: sum_over_time
     by:
       # Dmitri's required fields (__name__ is re-added by the ingestor; time comes from samples)
@@ -104,16 +108,17 @@ prometheus:
       - kube_node_label_karpenter_sh_nodepool
 
 storage:
-  backend: "s3"  # Options: "local" or "s3"
+  # backend: "s3"  # Options: "local" or "s3"
+  backend: "local"
   local:
     # parent_directory: "/Users/arisgia/Documents/HUNT/"
     parent_directory: "/Users/arisgia/Documents/hunt-cpy/zero-day-kubernetes-threat-detection/data"
     base_path: "hunt-data-store/sysdig/monitor/prometheus"
   s3:
-    base_path: "s3://hunt-data-store/sysdig/monitor/prometheusV4"
+    base_path: "s3://hunt-data-store/sysdig/monitor/prometheusV7"
 
 run:
-  num_workers: 4
+  num_workers: 5
   fetch_all_clusters_at_once: false
 
 logging:
@@ -142,8 +147,8 @@ logging:
       backup_count: 3
 
     console:
-      enabled: false
-      colored: false  # Will only apply when storage.backend == "local"
+      enabled: true
+      colored: true  # Will only apply when storage.backend == "local"
 
     # Structured (same format as the files) to stdout, for container log collection (e.g. EKS).
     # Off on EC2, where the Splunk forwarder tails the mounted log directory.

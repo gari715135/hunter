@@ -42,7 +42,7 @@ kube_node_label_topology_kubernetes_io_zone, kube_node_label_karpenter_sh_nodepo
 - Sparse namespace labels: istio_injection, dynakube.
 
 ## Pipeline notes
-- The hourly fetch overlaps the previous one by 5 minutes, so there are duplicate rows (all identical). Drop them in Glue with dropDuplicates() on all columns.
-- Day boundary: the partition is named after the fetch end time, so the 00:00 run writes day D's last hour into dt=D+1.
+- The hourly fetch overlaps the previous one by 5 minutes, so the same series and timestamp can come from two fetches. The fetch window is snapped to the 10s step so both copies share a timestamp; the Glue job keeps one row per series and timestamp, taking the value from the later fetch (an earlier copy can be incomplete because of ingestion lag).
+- Day boundary: the partition is named after the fetch end time, so the 00:00 run writes day D's last hour into dt=D+1. The Glue job reads dt=D plus the early dt=D+1 files and assigns rows to the day of their own `time` (UTC).
 - Possible ingestion lag in Sysdig for the most recent ~30–40 min (not yet confirmed).
 - Deploy schema changes at a day boundary so no day mixes the old (98-column) and new (41-column) layouts.
