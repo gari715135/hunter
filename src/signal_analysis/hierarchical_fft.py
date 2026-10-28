@@ -200,7 +200,16 @@ class HierarchicalFFTAnalyzer:
             # f_series=(freqs, spectrum),
         )
 
-        self.logger.info(result)
+        self.logger.debug(
+            "FFT analysis completed",
+            extra={
+                "event": "fft_analysis_completed",
+                "peak_period_seconds": peak_period,
+                "power_ratio": ratio,
+                "threshold": threshold,
+                "is_suspicious": is_suspicious,
+            },
+        )
 
         if self.return_series:
             result.t_series = (time_arr, values)

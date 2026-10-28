@@ -54,7 +54,7 @@ class PromDataIngester:
         self.logger: Logger = logger
         self.storage = storage_backend
 
-        self.logger.info("Initializing Prometheus data ingestor", extra={"event": "ingestor_init"})
+        self.logger.debug("Initializing Prometheus data ingestor", extra={"event": "ingestor_init"})
 
         prom_conf = config.get("prometheus", {})
         self.client = PrometheusClient(
@@ -253,7 +253,7 @@ class PromDataIngester:
             self.exclude_containers,
         )
         q = self.aggregation.wrap(selector, metric_name, self.step_seconds)
-        self.logger.info(
+        self.logger.debug(
             "Querying metric",
             extra={
                 "event": "prom_query_started",

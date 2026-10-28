@@ -83,7 +83,7 @@ class PrometheusClient:
         self.logger = logger
         self.base_url = base_url.replace("https://", "")
 
-        self.logger.info("Initializing Prometheus client", extra={"event": "client_init", "base_url": self.base_url})
+        self.logger.debug("Initializing Prometheus client", extra={"event": "client_init", "base_url": self.base_url})
 
         # Create session and build headers
         headers = {"Authorization": f"Bearer {self.bearer_token}"}
@@ -315,7 +315,7 @@ class PrometheusClient:
 
         if data.get("status") == "success":
             labels = data.get("data", [])
-            self.logger.info("Labels fetched", extra={"event": "labels_fetched", "count": len(labels)})
+            self.logger.debug("Labels fetched", extra={"event": "labels_fetched", "count": len(labels)})
             return labels
 
         self.logger.warning(
@@ -338,7 +338,7 @@ class PrometheusClient:
 
         if data.get("status") == "success":
             values = data.get("data", [])
-            self.logger.info(
+            self.logger.debug(
                 "Label values fetched", extra={"event": "label_values_fetched", "label": label, "count": len(values)}
             )
             return values
