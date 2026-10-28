@@ -42,7 +42,9 @@ from src.logger_config import (generate_correlation_id, log_context,
 from src.signal_analysis.beacon_detector import BeaconDetector
 
 LOGGING_SECTION = "beacon_logging"
-THRESHOLD_FACTOR = 10
+# Peak must be this many times its neighbouring bins. Random traffic of many shapes stayed
+# under ~6 in testing; jittered beacons over a day score 10-50, clean ones far more.
+THRESHOLD_FACTOR = 8
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

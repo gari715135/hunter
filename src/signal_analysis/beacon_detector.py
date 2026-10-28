@@ -89,8 +89,11 @@ class BeaconCandidate:
     client_ip: str
     server_ip: str
     sample_size: int
+    # Estimated beacon interval (the fundamental, not whichever harmonic was strongest).
     peak_frequency_hz: Optional[float] = None
     peak_period_seconds: Optional[float] = None
+    # Strongest bin, the median of its neighbouring bins, and their ratio. Suspicious when
+    # power_ratio > threshold_factor, i.e. peak_power > threshold (= factor * median_power).
     peak_power: Optional[float] = None
     median_power: Optional[float] = None
     power_ratio: Optional[float] = None
@@ -124,7 +127,7 @@ class BeaconDetector:
         min_samples: int = 32,
         window_type: str = "hamming",
         offset_pct: float = 0.1,
-        threshold_factor: float = 4.0,
+        threshold_factor: float = 8.0,
     ):
         if agg not in {"sum", "mean"}:
             raise ValueError("agg must be 'sum' or 'mean'.")
@@ -295,35 +298,26 @@ class BeaconDetector:
         if len(spectrum) <= 1:
             return None
 
-        # Ignore the low-frequency portion (slow drift) before finding the peak.
-        offset = int(np.floor(self.offset_pct * len(spectrum)))
+        # Score each bin against the median of its neighbours, not the whole spectrum: a beacon's
+        # harmonics would inflate a global mean/std, and smooth traffic (drift, bursts) raises
+        # its neighbours along with itself. Bins below offset_pct (slow drift) can't be the peak.
+        floor = local_noise_floor(spectrum) + 1e-9
+        snr = spectrum / floor
+        offset = max(int(np.floor(self.offset_pct * len(spectrum))), 1)
         if offset >= len(spectrum):
-            offset = 0
-        tail = spectrum[offset:]
-        if len(tail) == 0:
             return None
+        peak_index = offset + int(np.argmax(snr[offset:]))
+        peak_power = float(spectrum[peak_index])
+        median_power = float(floor[peak_index])
+        ratio = float(snr[peak_index])
+        threshold = self.threshold_factor * median_power
+        is_suspicious = ratio > self.threshold_factor
 
-        peak_index = int(np.argmax(tail))
-        peak_power = float(tail[peak_index])
-        median_power = float(np.median(tail))
-        ratio = float(peak_power / (median_power + 1e-9))
-
-        # FIX vs. original: map the peak back to a REAL frequency via `freqs`,
-        # instead of reading a magnitude value as if it were a frequency.
-        global_index = offset + peak_index
-        peak_freq = float(freqs[global_index]) if global_index < len(freqs) else None
-        peak_period = float(1.0 / peak_freq) if peak_freq and peak_freq > 0 else None
-
-        threshold = SignalTransformations.compute_fft_threshold(
-            fft_mag=spectrum,
-            offset_pct=self.offset_pct,
-            threshold_factor=self.threshold_factor,
-        )
-        is_suspicious = SignalTransformations.is_suspicious_signal(
-            fft_mag=spectrum,
-            threshold=threshold,
-            offset_pct=self.offset_pct,
-        )
+        # A beacon's spectrum is a comb: the strongest bin may be any harmonic, so walk down to
+        # the fundamental before turning it into a period.
+        fundamental_bin = fundamental_frequency_bin(spectrum, snr, peak_index, self.threshold_factor)
+        peak_freq = float(fundamental_bin * freqs[1]) if fundamental_bin > 0 else None
+        peak_period = float(1.0 / peak_freq) if peak_freq else None
 
         # Observation window / volume from the raw (pre-resample) rows.
         times = pd.to_datetime(sub_df[self.time_col])
@@ -353,6 +347,63 @@ class BeaconDetector:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+NOISE_WINDOW_BINS = 25  # neighbours on each side that make up a bin's noise floor
+NOISE_GUARD_BINS = 2  # left out on each side: a peak's own main lobe (Hamming: +/-2 bins)
+
+
+def local_noise_floor(spectrum: np.ndarray) -> np.ndarray:
+    """Median magnitude of each bin's neighbours, leaving out the bin's own main lobe."""
+    width = 2 * NOISE_WINDOW_BINS + 1
+    padded = np.pad(spectrum, NOISE_WINDOW_BINS, mode="reflect" if len(spectrum) > NOISE_WINDOW_BINS else "edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, width)
+    keep = np.ones(width, dtype=bool)
+    keep[NOISE_WINDOW_BINS - NOISE_GUARD_BINS:NOISE_WINDOW_BINS + NOISE_GUARD_BINS + 1] = False
+    return np.median(windows[:, keep], axis=1)
+
+
+def fundamental_frequency_bin(
+    spectrum: np.ndarray,
+    snr: np.ndarray,
+    peak_index: int,
+    threshold_factor: float,
+    min_cycles: int = 3,
+    min_relative_magnitude: float = 0.1,
+) -> float:
+    """Fractional FFT bin of the fundamental behind the peak at peak_index.
+
+    Tries peak/m for the largest m first and takes it when a real peak sits there (at least
+    `min_relative_magnitude` of the main peak, which window leakage never reaches) and at least
+    half of its multiples up to the main peak are peaks too. The answer is peak/m rather than
+    the fundamental's own bin, because the main peak's position is far more precise.
+    """
+    n = len(spectrum)
+    position = float(peak_index)
+    if 0 < peak_index < n - 1:
+        # Parabolic interpolation on log magnitude: sub-bin position of the main peak.
+        left, centre, right = np.log(spectrum[peak_index - 1:peak_index + 2] + 1e-12)
+        curvature = left - 2 * centre + right
+        if curvature < 0:
+            position = peak_index + 0.5 * (left - right) / curvature
+
+    is_peak = np.zeros(n, dtype=bool)
+    is_peak[1:-1] = (spectrum[1:-1] >= spectrum[:-2]) & (spectrum[1:-1] >= spectrum[2:])
+    peaks = np.flatnonzero(is_peak & (snr >= threshold_factor / 2))
+
+    def peak_near(target: float) -> Optional[int]:
+        i = int(np.searchsorted(peaks, target))
+        close = [p for p in peaks[max(i - 1, 0):i + 1] if abs(p - target) <= 1]
+        return min(close, key=lambda p: abs(p - target)) if close else None
+
+    for m in range(int(position // min_cycles), 1, -1):
+        base = position / m
+        found = peak_near(base)
+        if found is None or spectrum[found] < min_relative_magnitude * spectrum[peak_index]:
+            continue
+        hits = sum(peak_near(base * h) is not None for h in range(1, m + 1))
+        if hits >= m / 2:
+            return base
+    return position
 
 
 def candidate_record(c: BeaconCandidate) -> Dict:
