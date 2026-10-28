@@ -166,17 +166,18 @@ def build_formatter(logging_cfg: dict) -> logging.Formatter:
     return logging.Formatter(fmt=detailed_format, datefmt="%Y-%m-%d %H:%M:%S")
 
 
-def setup_logging_system(config: dict) -> dict:
+def setup_logging_system(config: dict, section: str = "logging") -> dict:
     """
     Set up hierarchical logging system with multiple handlers.
 
     Args:
         config: Application configuration dictionary
+        section: Top-level config key holding the logging settings (e.g. "beacon_logging")
 
     Returns:
         dict: Mapping of component names to ContextualLogger instances
     """
-    logging_cfg = config.get("logging", {})
+    logging_cfg = config.get(section, {})
     storage_backend = config.get("storage", {}).get("backend", "local")
 
     # Root logger setup
@@ -286,6 +287,24 @@ def setup_logging_system(config: dict) -> dict:
     for handler in (file_handler, error_handler, stdout_handler):
         if handler is not None:
             urllib3_logger.addHandler(handler)
+
+    # Optional dedicated records file (one JSON event per result, nothing else). The records
+    # logger does not propagate, so diagnostics stay out of it and records stay out of app.log.
+    records_cfg = handlers_cfg.get("records")
+    if records_cfg:
+        records_path = records_cfg["path"]
+        os.makedirs(os.path.dirname(records_path) or ".", exist_ok=True)
+        records_handler = RotatingFileHandler(
+            records_path,
+            maxBytes=records_cfg.get("max_bytes", 10485760),
+            backupCount=records_cfg.get("backup_count", 5),
+        )
+        records_handler.setFormatter(structured_formatter)
+        records_handler.addFilter(context_filter)
+        records_logger = logging.getLogger(f"prometheus_pipeline.{records_cfg.get('component', 'records')}")
+        records_logger.propagate = False
+        records_logger.handlers.clear()
+        records_logger.addHandler(records_handler)
 
     # Create component loggers
     components = logging_cfg.get("components", {})

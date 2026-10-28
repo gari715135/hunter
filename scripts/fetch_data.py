@@ -14,7 +14,6 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 import boto3
-import yaml
 from botocore.exceptions import ClientError
 
 try:
@@ -25,6 +24,7 @@ try:
 except ImportError:
     pass
 
+from src.config_loader import load_yaml_config
 from src.logger_config import (generate_correlation_id, get_logger,
                                setup_logging_system)
 from src.prometheus_tools import orchestrator as orchestrator_module
@@ -56,18 +56,6 @@ def get_secret(secret_key="SYSDIG_MONITOR_API_TOKEN", aws_secret_name="hunt/sysd
     secret = get_secret_value_response.get("SecretString")
     secret = json.loads(secret)
     return secret.get(secret_key)
-
-
-def load_yaml_config(path: str = "config.yaml") -> dict:
-    """Load YAML configuration file."""
-    config_path = Path(path)
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {path}")
-
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-
-    return cfg
 
 
 def read_env_file(path) -> dict:
