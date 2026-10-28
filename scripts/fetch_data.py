@@ -88,40 +88,44 @@ def get_local_token(secret_key="SYSDIG_MONITOR_API_TOKEN", env_file=None) -> str
 
 def inject_local_bearer_token(cfg: dict, logger, env_file=None) -> None:
     """Inject bearer token from an environment variable or env file (local mode, no AWS access needed)."""
-    logger.info("Loading bearer token from environment (local mode)")
+    logger.debug("Loading bearer token", extra={"event": "bearer_token_loading", "source": "env"})
 
     token = get_local_token("SYSDIG_MONITOR_API_TOKEN", env_file)
 
     if not token:
-        logger.critical("No bearer token available in environment or env file")
+        logger.critical("No bearer token available in environment or env file", extra={"event": "bearer_token_missing", "source": "env"})
         raise ValueError(
             "No bearer token found. Set SYSDIG_MONITOR_API_TOKEN in the environment or in "
             f"{env_file or Path(PROJECT_ROOT) / '.env'}"
         )
 
     cfg["prometheus"]["bearer_token"] = token
-    logger.info("Bearer token loaded successfully")
+    logger.info("Bearer token loaded", extra={"event": "bearer_token_loaded", "source": "env"})
 
 
 def inject_bearer_token(cfg: dict, logger) -> None:
     """Inject bearer token into configuration."""
-    logger.info("Loading bearer token from AWS Secrets Manager")
+    logger.debug("Loading bearer token", extra={"event": "bearer_token_loading", "source": "secrets_manager"})
 
     token = None
 
     try:
         token = get_secret("SYSDIG_MONITOR_API_TOKEN", "hunt/sysdig/monitor")
-
-        logger.info("Bearer token retrieved successfully from AWS Secrets Manager")
     except Exception as e:
-        logger.warning(f"Failed to retrieve token from AWS Secrets Manager: {e}")
+        logger.warning(
+            "Failed to retrieve token from AWS Secrets Manager",
+            extra={"event": "bearer_token_fetch_failed", "error_type": type(e).__name__, "error": str(e)},
+        )
 
     if not token:
-        logger.critical("No bearer token available from AWS Secrets Manager")
+        logger.critical(
+            "No bearer token available from AWS Secrets Manager",
+            extra={"event": "bearer_token_missing", "source": "secrets_manager"},
+        )
         raise ValueError("No bearer token found. Ensure hunt/sysdig/monitor is accessible in AWS Secrets Manager")
 
     cfg["prometheus"]["bearer_token"] = token
-    logger.info("Bearer token loaded successfully")
+    logger.info("Bearer token loaded", extra={"event": "bearer_token_loaded", "source": "secrets_manager"})
 
 
 def calculate_time_window(cfg: dict, logger, now: int = None) -> None:
@@ -140,36 +144,43 @@ def calculate_time_window(cfg: dict, logger, now: int = None) -> None:
     }
 
     logger.info(
-        f"Time window calculated start_ts={start} end_ts={now} "
-        f"duration_seconds={now - start} step_seconds={STEP_SECONDS}"
+        "Time window calculated",
+        extra={
+            "event": "time_window_calculated",
+            "window_start": start,
+            "window_end": now,
+            "duration_s": now - start,
+            "step_s": STEP_SECONDS,
+        },
     )
 
 
-def load_config(path: str = None, local: bool = False, env_file: str = None) -> dict:
-    """Load and prepare configuration. With local=True the token comes from the environment, not AWS."""
-    # Use temporary logger for config loading
-    temp_logger = get_logger("config")
+def default_config_path() -> str:
+    """config.yaml in the project root (parent of the scripts directory)."""
+    return str(Path(__file__).parent.parent / "config.yaml")
 
-    # Default to config.yaml in project root (parent of scripts directory)
-    if path is None:
-        script_dir = Path(__file__).parent
-        path = str(script_dir.parent / "config.yaml")
 
-    temp_logger.info(f"Loading configuration from path={path}")
+def read_config(path: str = None) -> dict:
+    """Read config.yaml. Runs before logging is set up (logging is configured from it), so a
+    failure surfaces as the exception's traceback on stderr rather than a log event."""
+    return load_yaml_config(path or default_config_path())
 
-    try:
-        cfg = load_yaml_config(path)
-        temp_logger.info("Configuration file loaded successfully")
-    except Exception as e:
-        temp_logger.critical(f'Failed to load configuration error="{e}"')
-        raise
 
+def prepare_config(cfg: dict, logger, local: bool = False, env_file: str = None) -> None:
+    """Inject the bearer token and time window. With local=True the token comes from the environment, not AWS.
+
+    Call after setup_logging_system so these events reach the log files."""
     if local:
-        inject_local_bearer_token(cfg, temp_logger, env_file)
+        inject_local_bearer_token(cfg, logger, env_file)
     else:
-        inject_bearer_token(cfg, temp_logger)
-    calculate_time_window(cfg, temp_logger)
+        inject_bearer_token(cfg, logger)
+    calculate_time_window(cfg, logger)
 
+
+def load_config(path: str = None, local: bool = False, env_file: str = None) -> dict:
+    """Read and prepare configuration in one step (no logging setup in between)."""
+    cfg = read_config(path)
+    prepare_config(cfg, get_logger("config"), local=local, env_file=env_file)
     return cfg
 
 
@@ -262,10 +273,9 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    # Load configuration
-    cfg = load_config(local=args.local, env_file=args.env_file)
-
-    # Initialize logging system
+    # Read configuration, then set up logging from it before anything else logs
+    config_path = default_config_path()
+    cfg = read_config(config_path)
     loggers = setup_logging_system(cfg)
 
     # Set the run ID for all loggers (worker threads inherit it via contextvars.copy_context)
@@ -273,6 +283,8 @@ if __name__ == "__main__":
         logger.set_correlation_id(correlation_id)
 
     main_logger = loggers.get("config", get_logger("config"))
+    main_logger.info("Configuration loaded", extra={"event": "config_loaded", "path": config_path})
+    prepare_config(cfg, main_logger, local=args.local, env_file=args.env_file)
     run_start = time.monotonic()
     run_fields = {"window_start": cfg["query_params"]["start"], "window_end": cfg["query_params"]["stop"]}
 

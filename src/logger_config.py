@@ -262,7 +262,7 @@ def setup_logging_system(config: dict, section: str = "logging") -> dict:
                         "CRITICAL": "red,bg_white",
                     },
                 )
-                root_logger.info("Console colors enabled for local development")
+                root_logger.debug("Console colors enabled for local development")
             except ImportError:
                 # Fallback to regular formatter if colorlog not available
                 console_formatter = logging.Formatter(fmt=console_format, datefmt="%Y-%m-%d %H:%M:%S")

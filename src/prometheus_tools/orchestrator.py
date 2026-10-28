@@ -52,16 +52,18 @@ class ProgressTracker:
         self.succeeded = 0
         self.empty = 0
         self.failed = 0
+        self.truncated = 0  # jobs where Sysdig capped the series returned (data incomplete)
         self.failed_jobs: List[str] = []
         self.logger = logger
         self.lock = threading.Lock()
         self.start_time = time.monotonic()
         self.log_interval = log_interval  # Log every N completions
 
-    def record(self, job_name: str, status: str):
+    def record(self, job_name: str, status: str, truncated: bool = False):
         """Record a finished job (status: success | empty | failed)."""
         with self.lock:
             self.completed += 1
+            self.truncated += truncated
             if status == "success":
                 self.succeeded += 1
             elif status == "empty":
@@ -105,6 +107,7 @@ class ProgressTracker:
             "succeeded": self.succeeded,
             "empty": self.empty,
             "failed": self.failed,
+            "truncated": self.truncated,
             "failed_jobs": sorted(self.failed_jobs),
             "success_rate": round((self.succeeded + self.empty) / self.total * 100, 1) if self.total > 0 else 0,
             "execution_ms": int(elapsed * 1000),
@@ -238,7 +241,7 @@ class MetricsFetchOrchestrator:
 
                 # None means the job was skipped because shutdown was requested
                 if result is not None:
-                    progress.record(job_id(job), result.status)
+                    progress.record(job_id(job), result.status, truncated=result.truncated)
 
                 if shutdown_requested:
                     self.logger.warning("Shutdown requested, cancelling remaining jobs", extra={"event": "jobs_cancelling"})
