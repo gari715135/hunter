@@ -137,9 +137,9 @@ logging:
 
   handlers:
     file:
-      path: "logs/fetch_data/app.log"
-      max_bytes: 10485760  # 10MB
-      backup_count: 3
+      path: "/opt/hunt/logs/beacons.log"  # TEMPORARY: only file the Splunk forwarder tails (was logs/fetch_data/app.log)
+      max_bytes: 52428800  # 50MB, same as detect records (shared file)
+      backup_count: 5
 
     error_file:
       path: "logs/fetch_data/error.log"
@@ -186,7 +186,7 @@ beacon_logging:
 
     # One beacon_candidate event per line, nothing else (for the Splunk forwarder).
     records:
-      path: "logs/detect_beacons/beacons.log"
+      path: "/opt/hunt/logs/beacons.log"  # TEMPORARY: only file the Splunk forwarder tails (was logs/detect_beacons/beacons.log)
       max_bytes: 52428800  # 50MB
       backup_count: 5
 
