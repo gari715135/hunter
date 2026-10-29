@@ -1,0 +1,40 @@
+- name: kube_cluster_name
+  groupby:
+    - metric.kube_cluster_name
+# - name: kube_node_name
+#   groupby:
+#     - metric.kube_node_name
+- name: namespace
+  groupby:
+    - metric.kube_namespace_name
+- name: source_ip
+  groupby:
+    -  metric.client_ip
+- name: destination_ip
+  groupby:
+    - metric.server_ip
+- name : source container_name
+  groupby:
+    - metric.container_label_io_kubernetes_container_name
+#Pod level - Need to add from this level in power bi dashboard.
+- name : source pod_name
+  groupby:
+    - metric.kube_pod_name
+- name : program_name
+  groupby:
+    - metric.program
+- name : program_name
+  groupby:
+    - metric.program
+- name : program_name_cmd
+  groupby:
+    - metric.program_cmd_line
+# Alternative: analyze client-server pairs together
+# - name: client_server_pair
+#   groupby:
+#     - metric.client_ip
+#     - metric.server_ip
+# - name: workload
+#   groupby:
+#     - "metric.kube_workload_name"
+#     - "metric.kube_workload_type"

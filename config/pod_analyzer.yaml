@@ -1,0 +1,74 @@
+security_analysis:
+  # FFT Analysis Parameters
+  fft_threshold_factor: 3.0
+  min_samples_required: 10
+  analysis_window_seconds: 300
+
+  # Threat Detection Thresholds
+  threat_scores:
+    beaconing_threshold: 35
+    data_exfiltration_threshold: 25
+    volume_anomaly_threshold: 25
+    frequency_variation_threshold: 30
+
+  # Traffic Pattern Analysis
+  traffic_patterns:
+    max_packet_size: 1500
+    min_packet_size: 64
+    suspicious_byte_threshold: 1000000  # 1MB
+    port_scan_threshold: 10
+    external_destination_threshold: 5
+    protocol_diversity_threshold: 3
+
+  # Risk Level Mapping
+  risk_levels:
+    critical_score: 80
+    high_score: 60
+    medium_score: 40
+    critical_patterns: 3
+    high_patterns: 2
+    medium_patterns: 1
+
+# Pod Network Monitoring
+pod_monitoring:
+  # Kubernetes Clusters to Monitor
+  clusters:
+    - "eks-dev-k8s-west-2"
+    - "eks-prod-k8s-east-1"
+
+  # Namespaces to Focus On
+  high_priority_namespaces:
+    - "webserver-dev"
+    - "database-prod"
+    - "api-gateway"
+    - "payment-processing"
+
+  # Suspicious Programs/Processes
+  suspicious_programs:
+    - "nc"
+    - "netcat"
+    - "wget"
+    - "curl"
+    - "python"
+    - "bash"
+    - "sh"
+
+  # Trusted Internal IP Ranges
+  internal_ip_ranges:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+# Export Configuration
+export_settings:
+  excel_formatting: true
+  include_charts: true
+  separate_sheets_by_risk: true
+  max_rows_per_sheet: 10000
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  file: "pod_security_analysis.log"
+  max_size_mb: 50
+  backup_count: 5

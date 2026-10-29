@@ -1,4 +1,4 @@
-# Dockerfile
+# ./docker/Dockerfile.fetch
 # Use python 'slim'
 FROM python:3.11-slim
 
@@ -18,8 +18,8 @@ RUN pip install --no-cache-dir -r requirementsV3.txt
 
 # Copy application code
 COPY src/ ./src/
-COPY scripts/ ./scripts/
-COPY config.yaml .
+# Baked-in default; the server's /opt/hunt/config.yaml is mounted over it at runtime
+COPY config/config.srv.yaml ./config.yaml
 
 # Create directory for local storage (will be mounted)
 RUN mkdir -p /data
@@ -29,7 +29,8 @@ ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="169.254.
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src
+ENV HUNT_CONFIG=/app/config.yaml
 
 # Run the fetch script - use python -m to ensure proper module resolution
-CMD ["python", "-m", "scripts.fetch_data"]
+CMD ["python", "-m", "hunt.cli.fetch"]
