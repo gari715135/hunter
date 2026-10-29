@@ -83,7 +83,10 @@ class PrometheusClient:
         self.logger = logger
         self.base_url = base_url.replace("https://", "")
 
-        self.logger.debug("Initializing Prometheus client", extra={"event": "client_init", "base_url": self.base_url})
+        self.logger.debug(
+            "Initializing Prometheus client",
+            extra={"event": "client_init", "base_url": self.base_url},
+        )
 
         # Create session and build headers
         headers = {"Authorization": f"Bearer {self.bearer_token}"}
@@ -282,7 +285,10 @@ class PrometheusClient:
     def query_range(self, prom_query: str, start: int, end: int, step: int) -> PromResponse:
         """Range query. Raises PromQueryError if the request fails."""
         if start >= end:
-            self.logger.error("Invalid time range", extra={"event": "invalid_time_range", "start": start, "end": end})
+            self.logger.error(
+                "Invalid time range",
+                extra={"event": "invalid_time_range", "start": start, "end": end},
+            )
             raise ValueError("Start must be before end")
 
         params = dict(
@@ -310,22 +316,32 @@ class PrometheusClient:
         try:
             data = self._send_get_request("/api/v1/labels", {}).data
         except PromQueryError as e:
-            self.logger.warning("Failed to fetch labels", extra={"event": "labels_fetch_failed", **e.as_fields()})
+            self.logger.warning(
+                "Failed to fetch labels", extra={"event": "labels_fetch_failed", **e.as_fields()}
+            )
             return None
 
         if data.get("status") == "success":
             labels = data.get("data", [])
-            self.logger.debug("Labels fetched", extra={"event": "labels_fetched", "count": len(labels)})
+            self.logger.debug(
+                "Labels fetched", extra={"event": "labels_fetched", "count": len(labels)}
+            )
             return labels
 
         self.logger.warning(
             "Labels request returned non-success status",
-            extra={"event": "labels_fetch_failed", "status": data.get("status"), "error": data.get("error")},
+            extra={
+                "event": "labels_fetch_failed",
+                "status": data.get("status"),
+                "error": data.get("error"),
+            },
         )
         return None
 
     def get_label_values(self, label: str):
-        self.logger.debug("Fetching label values", extra={"event": "label_values_fetch", "label": label})
+        self.logger.debug(
+            "Fetching label values", extra={"event": "label_values_fetch", "label": label}
+        )
         endpoint = f"/api/v1/label/{label}/values"
         try:
             data = self._send_get_request(endpoint, {}).data
@@ -339,7 +355,8 @@ class PrometheusClient:
         if data.get("status") == "success":
             values = data.get("data", [])
             self.logger.debug(
-                "Label values fetched", extra={"event": "label_values_fetched", "label": label, "count": len(values)}
+                "Label values fetched",
+                extra={"event": "label_values_fetched", "label": label, "count": len(values)},
             )
             return values
 

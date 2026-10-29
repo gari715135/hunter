@@ -5,7 +5,6 @@
 
 set -euo pipefail
 
-# CHANGED: new files come out group-writable (664/775) so the hunt group can edit them
 umask 002
 
 bkt="s3://hunt-data-store/code/"
@@ -34,8 +33,6 @@ if [[ "${1:-}" == "pull" ]]; then
     fi
 
     # Mirror code, deleting stale files - but never touch runtime state.
-    # CHANGED: -a replaced with -rlt plus --no-owner/--no-group/--no-perms/--omit-dir-times
-    # so rsync stops trying to chgrp/chmod root-owned files; docker-debug is root-only, so skip it.
     rsync -rlt --no-owner --no-group --no-perms --omit-dir-times --delete \
         --exclude 'logs/' \
         --exclude 'data/' \

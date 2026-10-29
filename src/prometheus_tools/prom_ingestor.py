@@ -13,7 +13,7 @@ from src.prometheus_tools.storage_backends import (StorageBackend,
                                                    StorageWriteError)
 from src.prometheus_tools.transform import response_to_frame
 from src.prometheus_tools.utils import (df_to_parquet_bytes, elapsed_ms,
-                                         get_timestamp_parts)
+                                        get_timestamp_parts)
 
 
 @dataclass
@@ -50,7 +50,13 @@ class JobResult:
 
 
 class PromDataIngester:
-    def __init__(self, config: Dict, logger: Logger, storage_backend: StorageBackend, client_logger: Logger = None):
+    def __init__(
+        self,
+        config: Dict,
+        logger: Logger,
+        storage_backend: StorageBackend,
+        client_logger: Logger = None,
+    ):
         self.logger: Logger = logger
         self.storage = storage_backend
 
@@ -128,7 +134,12 @@ class PromDataIngester:
         result.write_ms += write_ms
         self.logger.debug(
             "Raw payload saved",
-            extra={"event": "raw_payload_saved", "path": path, "bytes": len(body), "write_ms": write_ms},
+            extra={
+                "event": "raw_payload_saved",
+                "path": path,
+                "bytes": len(body),
+                "write_ms": write_ms,
+            },
         )
 
     def _to_frame(self, raw: dict, metric_name: str):
@@ -192,7 +203,10 @@ class PromDataIngester:
         )
 
     def get_unique_clusters(self) -> List[str]:
-        self.logger.info("Fetching unique cluster names using label API", extra={"event": "cluster_discovery_started"})
+        self.logger.info(
+            "Fetching unique cluster names using label API",
+            extra={"event": "cluster_discovery_started"},
+        )
 
         start_time = time.monotonic()
         cluster_values = self.client.get_label_values("agent_tag_cluster")
@@ -228,7 +242,8 @@ class PromDataIngester:
                 )
             else:
                 self.logger.warning(
-                    "Sysdig returned a query warning", extra={"event": "prom_query_warning", "sysdig_warning": text}
+                    "Sysdig returned a query warning",
+                    extra={"event": "prom_query_warning", "sysdig_warning": text},
                 )
 
     def get_sysdig_metric(
@@ -294,14 +309,18 @@ class PromDataIngester:
         result_list = raw.get("data", {}).get("result", [])
         result.series = len(result_list)
         if not result_list:
-            self.logger.warning("Query succeeded but returned no series", extra={"event": "prom_query_empty"})
+            self.logger.warning(
+                "Query succeeded but returned no series", extra={"event": "prom_query_empty"}
+            )
 
         try:
             self._save_raw_payload(result, raw, fetch_all_clusters=fetch_all_clusters)
             self._save_tabular_data(result, raw, fetch_all_clusters=fetch_all_clusters)
         except StorageWriteError as e:
             # Keep what was already written (e.g. raw_path) so a half-written partition is visible
-            self.logger.exception("Storage write failed", extra={"event": "storage_write_failed", "path": e.path})
+            self.logger.exception(
+                "Storage write failed", extra={"event": "storage_write_failed", "path": e.path}
+            )
             result.error_type = type(e).__name__
             result.error = str(e)
             return result

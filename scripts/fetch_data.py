@@ -93,7 +93,10 @@ def inject_local_bearer_token(cfg: dict, logger, env_file=None) -> None:
     token = get_local_token("SYSDIG_MONITOR_API_TOKEN", env_file)
 
     if not token:
-        logger.critical("No bearer token available in environment or env file", extra={"event": "bearer_token_missing", "source": "env"})
+        logger.critical(
+            "No bearer token available in environment or env file",
+            extra={"event": "bearer_token_missing", "source": "env"},
+        )
         raise ValueError(
             "No bearer token found. Set SYSDIG_MONITOR_API_TOKEN in the environment or in "
             f"{env_file or Path(PROJECT_ROOT) / '.env'}"
@@ -105,7 +108,9 @@ def inject_local_bearer_token(cfg: dict, logger, env_file=None) -> None:
 
 def inject_bearer_token(cfg: dict, logger) -> None:
     """Inject bearer token into configuration."""
-    logger.debug("Loading bearer token", extra={"event": "bearer_token_loading", "source": "secrets_manager"})
+    logger.debug(
+        "Loading bearer token", extra={"event": "bearer_token_loading", "source": "secrets_manager"}
+    )
 
     token = None
 
@@ -114,7 +119,11 @@ def inject_bearer_token(cfg: dict, logger) -> None:
     except Exception as e:
         logger.warning(
             "Failed to retrieve token from AWS Secrets Manager",
-            extra={"event": "bearer_token_fetch_failed", "error_type": type(e).__name__, "error": str(e)},
+            extra={
+                "event": "bearer_token_fetch_failed",
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
         )
 
     if not token:
@@ -122,10 +131,14 @@ def inject_bearer_token(cfg: dict, logger) -> None:
             "No bearer token available from AWS Secrets Manager",
             extra={"event": "bearer_token_missing", "source": "secrets_manager"},
         )
-        raise ValueError("No bearer token found. Ensure hunt/sysdig/monitor is accessible in AWS Secrets Manager")
+        raise ValueError(
+            "No bearer token found. Ensure hunt/sysdig/monitor is accessible in AWS Secrets Manager"
+        )
 
     cfg["prometheus"]["bearer_token"] = token
-    logger.info("Bearer token loaded", extra={"event": "bearer_token_loaded", "source": "secrets_manager"})
+    logger.info(
+        "Bearer token loaded", extra={"event": "bearer_token_loaded", "source": "secrets_manager"}
+    )
 
 
 def calculate_time_window(cfg: dict, logger, now: int = None) -> None:
@@ -189,7 +202,10 @@ def create_storage_backend(cfg: dict, logger):
     storage_cfg = cfg.get("storage", {})
     backend_type = storage_cfg.get("backend", "local")
 
-    logger.info("Initializing storage backend", extra={"event": "storage_backend_selected", "backend": backend_type})
+    logger.info(
+        "Initializing storage backend",
+        extra={"event": "storage_backend_selected", "backend": backend_type},
+    )
 
     if backend_type == "s3":
         return S3Backend(logger)
@@ -198,13 +214,21 @@ def create_storage_backend(cfg: dict, logger):
         parent_dir = local_cfg.get("parent_directory")
 
         if not parent_dir:
-            logger.error("Missing required configuration", extra={"event": "config_missing", "key": "storage.local.parent_directory"})
-            raise ValueError("storage.local.parent_directory must be specified in config.yaml for local backend")
+            logger.error(
+                "Missing required configuration",
+                extra={"event": "config_missing", "key": "storage.local.parent_directory"},
+            )
+            raise ValueError(
+                "storage.local.parent_directory must be specified in config.yaml for local backend"
+            )
 
         parent_dir = os.path.expanduser(parent_dir)
         return LocalBackend(logger, parent_dir)
     else:
-        logger.error("Unknown storage backend", extra={"event": "config_invalid", "key": "storage.backend", "value": backend_type})
+        logger.error(
+            "Unknown storage backend",
+            extra={"event": "config_invalid", "key": "storage.backend", "value": backend_type},
+        )
         raise ValueError(f"Unknown storage backend type: {backend_type}")
 
 
@@ -217,20 +241,33 @@ def get_base_path(cfg: dict, logger) -> str:
         s3_cfg = storage_cfg.get("s3", {})
         base_path = s3_cfg.get("base_path")  # <-- Changed from 'output_dir'
         if not base_path:
-            logger.error("Missing required configuration", extra={"event": "config_missing", "key": "storage.s3.base_path"})
+            logger.error(
+                "Missing required configuration",
+                extra={"event": "config_missing", "key": "storage.s3.base_path"},
+            )
             raise ValueError("storage.s3.base_path must be specified in config.yaml")
-        logger.debug("Using S3 base path", extra={"event": "base_path_selected", "base_path": base_path})
+        logger.debug(
+            "Using S3 base path", extra={"event": "base_path_selected", "base_path": base_path}
+        )
         return base_path
     elif backend_type == "local":
         local_cfg = storage_cfg.get("local", {})
         base_path = local_cfg.get("base_path")  # <-- Changed from 'data_store'
         if not base_path:
-            logger.error("Missing required configuration", extra={"event": "config_missing", "key": "storage.local.base_path"})
+            logger.error(
+                "Missing required configuration",
+                extra={"event": "config_missing", "key": "storage.local.base_path"},
+            )
             raise ValueError("storage.local.base_path must be specified in config.yaml")
-        logger.debug("Using local base path", extra={"event": "base_path_selected", "base_path": base_path})
+        logger.debug(
+            "Using local base path", extra={"event": "base_path_selected", "base_path": base_path}
+        )
         return base_path
     else:
-        logger.error("Unknown storage backend", extra={"event": "config_invalid", "key": "storage.backend", "value": backend_type})
+        logger.error(
+            "Unknown storage backend",
+            extra={"event": "config_invalid", "key": "storage.backend", "value": backend_type},
+        )
         raise ValueError(f"Unknown storage backend type: {backend_type}")
 
 
@@ -242,7 +279,9 @@ def init_ingestor(cfg: dict, loggers: dict) -> PromDataIngester:
     cfg["base_path"] = get_base_path(cfg, storage_logger)
 
     ingestor_logger = loggers["ingestor"]
-    return PromDataIngester(cfg, ingestor_logger, storage_backend, client_logger=loggers.get("client"))
+    return PromDataIngester(
+        cfg, ingestor_logger, storage_backend, client_logger=loggers.get("client")
+    )
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -252,7 +291,15 @@ def parse_args(argv=None) -> argparse.Namespace:
         action="store_true",
         help="Read SYSDIG_MONITOR_API_TOKEN from the environment or an env file instead of AWS Secrets Manager",
     )
-    parser.add_argument("--env-file", help="Env file to read the token from in local mode (default: <project root>/.env)")
+    parser.add_argument(
+        "--env-file",
+        help="Env file to read the token from in local mode (default: <project root>/.env)",
+    )
+    parser.add_argument(
+        "--config",
+        default=default_config_path(),
+        help="Path to the YAML configuration file (default: <project root>/config.yaml)",
+    )
     args = parser.parse_args(argv)
     if args.env_file and not args.local:
         parser.error("--env-file requires --local")
@@ -274,7 +321,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     # Read configuration, then set up logging from it before anything else logs
-    config_path = default_config_path()
+    config_path = str(Path(args.config).expanduser().resolve())
     cfg = read_config(config_path)
     loggers = setup_logging_system(cfg)
 
@@ -286,7 +333,10 @@ if __name__ == "__main__":
     main_logger.info("Configuration loaded", extra={"event": "config_loaded", "path": config_path})
     prepare_config(cfg, main_logger, local=args.local, env_file=args.env_file)
     run_start = time.monotonic()
-    run_fields = {"window_start": cfg["query_params"]["start"], "window_end": cfg["query_params"]["stop"]}
+    run_fields = {
+        "window_start": cfg["query_params"]["start"],
+        "window_end": cfg["query_params"]["stop"],
+    }
 
     run_cfg = cfg.get("run", {})
     fetch_all_clusters = run_cfg.get("fetch_all_clusters_at_once", False)
@@ -325,7 +375,9 @@ if __name__ == "__main__":
 
     except Exception as e:
         main_logger.critical(
-            "Pipeline failed with unhandled exception", extra={"event": "pipeline_failed"}, exc_info=True
+            "Pipeline failed with unhandled exception",
+            extra={"event": "pipeline_failed"},
+            exc_info=True,
         )
         main_logger.critical(
             "Fetch run crashed",
@@ -343,7 +395,9 @@ if __name__ == "__main__":
         raise
 
     exit_code = exit_code_for(summary)
-    status = "interrupted" if summary["interrupted"] else ("failed" if summary["failed"] else "success")
+    status = (
+        "interrupted" if summary["interrupted"] else ("failed" if summary["failed"] else "success")
+    )
     main_logger.log(
         logging.ERROR if exit_code else logging.INFO,
         f"Fetch run {status}",

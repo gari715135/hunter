@@ -1,5 +1,6 @@
 # ./src/prometheus_tools/transform.py
 """Prometheus range-query JSON -> DataFrame, plus the data-quality counters for the job event."""
+
 import re
 from logging import Logger
 from typing import List, Optional, Sequence, Tuple
@@ -73,12 +74,17 @@ def drop_unwanted_columns(df: pd.DataFrame, logger: Logger) -> pd.DataFrame:
     cols_dropped = cols_before - len(df.columns)
 
     if cols_dropped > 0:
-        logger.debug("Dropped sparse columns", extra={"event": "sparse_columns_dropped", "count": cols_dropped})
+        logger.debug(
+            "Dropped sparse columns",
+            extra={"event": "sparse_columns_dropped", "count": cols_dropped},
+        )
 
     cmdb_cols = get_app_cmdb_cols(df, CMDB_RE)
     if cmdb_cols:
         df = df.drop(columns=cmdb_cols)
-        logger.debug("Dropped CMDB columns", extra={"event": "cmdb_columns_dropped", "count": len(cmdb_cols)})
+        logger.debug(
+            "Dropped CMDB columns", extra={"event": "cmdb_columns_dropped", "count": len(cmdb_cols)}
+        )
 
     return df
 

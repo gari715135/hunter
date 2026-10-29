@@ -2,7 +2,13 @@
 from dataclasses import dataclass, field
 from typing import Dict, FrozenSet, Iterable, Optional, Tuple
 
-TIME_FUNCTIONS = {"sum_over_time", "avg_over_time", "max_over_time", "min_over_time", "count_over_time"}
+TIME_FUNCTIONS = {
+    "sum_over_time",
+    "avg_over_time",
+    "max_over_time",
+    "min_over_time",
+    "count_over_time",
+}
 
 
 def cluster_selector(
@@ -43,9 +49,15 @@ class Aggregation:
         )
         if spec.metrics and not spec.by:
             raise ValueError("prometheus.aggregation.metrics is set but aggregation.by is empty")
-        bad = {m: f for m, f in spec.time_functions.items() if f not in TIME_FUNCTIONS or m not in spec.metrics}
+        bad = {
+            m: f
+            for m, f in spec.time_functions.items()
+            if f not in TIME_FUNCTIONS or m not in spec.metrics
+        }
         if bad:
-            raise ValueError(f"Invalid aggregation.time_functions (unknown function or metric not in aggregation.metrics): {bad}")
+            raise ValueError(
+                f"Invalid aggregation.time_functions (unknown function or metric not in aggregation.metrics): {bad}"
+            )
         return spec
 
     def applies_to(self, metric_name: Optional[str]) -> bool:

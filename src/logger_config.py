@@ -31,7 +31,9 @@ def log_context(**fields):
     unknown = set(fields) - set(CONTEXT_FIELDS)
     if unknown:
         raise ValueError(f"Unknown log context fields: {sorted(unknown)}")
-    tokens = [(_context_vars[name], _context_vars[name].set(value)) for name, value in fields.items()]
+    tokens = [
+        (_context_vars[name], _context_vars[name].set(value)) for name, value in fields.items()
+    ]
     try:
         yield
     finally:
@@ -66,7 +68,9 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         doc = {
-            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(
+                timespec="milliseconds"
+            ),
             "level": record.levelname,
             "logger": record.name,
             "event": getattr(record, "event", None) or "log",
@@ -81,7 +85,9 @@ class JsonFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key not in _NON_EXTRA and key not in doc:
                 doc[key] = value
-        doc.update(thread=record.threadName, module=record.module, func=record.funcName, line=record.lineno)
+        doc.update(
+            thread=record.threadName, module=record.module, func=record.funcName, line=record.lineno
+        )
         if record.exc_info:
             doc["exc_type"] = record.exc_info[0].__name__ if record.exc_info[0] else None
             doc["exc"] = self.formatException(record.exc_info)
@@ -192,7 +198,9 @@ def setup_logging_system(config: dict, section: str = "logging") -> dict:
     # Create context filter
     context_filter = ContextFilter()
 
-    console_format = logging_cfg.get("format", {}).get("console", "%(asctime)s [%(levelname)-8s] %(name)-30s | %(message)s")
+    console_format = logging_cfg.get("format", {}).get(
+        "console", "%(asctime)s [%(levelname)-8s] %(name)-30s | %(message)s"
+    )
     structured_formatter = build_formatter(logging_cfg)
     handlers_cfg = logging_cfg.get("handlers", {})
 
@@ -207,7 +215,9 @@ def setup_logging_system(config: dict, section: str = "logging") -> dict:
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
     # Main file handler
-    file_handler = RotatingFileHandler(file_path, maxBytes=file_max_bytes, backupCount=file_backup_count)
+    file_handler = RotatingFileHandler(
+        file_path, maxBytes=file_max_bytes, backupCount=file_backup_count
+    )
     file_handler.setLevel(file_level)
     file_handler.setFormatter(structured_formatter)
     file_handler.addFilter(context_filter)
@@ -221,7 +231,9 @@ def setup_logging_system(config: dict, section: str = "logging") -> dict:
 
     os.makedirs(os.path.dirname(error_path), exist_ok=True)
 
-    error_handler = RotatingFileHandler(error_path, maxBytes=error_max_bytes, backupCount=error_backup_count)
+    error_handler = RotatingFileHandler(
+        error_path, maxBytes=error_max_bytes, backupCount=error_backup_count
+    )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(structured_formatter)
     error_handler.addFilter(context_filter)
@@ -265,9 +277,12 @@ def setup_logging_system(config: dict, section: str = "logging") -> dict:
                 root_logger.debug("Console colors enabled for local development")
             except ImportError:
                 # Fallback to regular formatter if colorlog not available
-                console_formatter = logging.Formatter(fmt=console_format, datefmt="%Y-%m-%d %H:%M:%S")
+                console_formatter = logging.Formatter(
+                    fmt=console_format, datefmt="%Y-%m-%d %H:%M:%S"
+                )
                 root_logger.warning(
-                    "colorlog not installed, using standard console output. " "Install with: pip install colorlog"
+                    "colorlog not installed, using standard console output. "
+                    "Install with: pip install colorlog"
                 )
         else:
             console_formatter = logging.Formatter(fmt=console_format, datefmt="%Y-%m-%d %H:%M:%S")
@@ -301,7 +316,9 @@ def setup_logging_system(config: dict, section: str = "logging") -> dict:
         )
         records_handler.setFormatter(structured_formatter)
         records_handler.addFilter(context_filter)
-        records_logger = logging.getLogger(f"prometheus_pipeline.{records_cfg.get('component', 'records')}")
+        records_logger = logging.getLogger(
+            f"prometheus_pipeline.{records_cfg.get('component', 'records')}"
+        )
         records_logger.propagate = False
         records_logger.handlers.clear()
         records_logger.addHandler(records_handler)

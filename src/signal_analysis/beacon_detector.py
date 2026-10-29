@@ -27,6 +27,7 @@ MVP shortcuts (deliberately deferred):
     thanos, health probes) beacons benignly by design. An allowlist of known
     periodic (program, destination) patterns is the obvious next layer.
 """
+
 import ipaddress
 import logging
 import time
@@ -172,7 +173,10 @@ class BeaconDetector:
         start = time.monotonic()
         df = self._filter_external(df)
         if df.empty:
-            self.logger.info("No external-destination traffic after filtering", extra={"event": "beacon_no_external_traffic"})
+            self.logger.info(
+                "No external-destination traffic after filtering",
+                extra={"event": "beacon_no_external_traffic"},
+            )
             return []
 
         df = df.copy()
@@ -224,7 +228,9 @@ class BeaconDetector:
         for c in results:
             if suspicious_only and not c.is_suspicious:
                 continue
-            sink.info("Beacon candidate", extra={"event": "beacon_candidate", **candidate_record(c)})
+            sink.info(
+                "Beacon candidate", extra={"event": "beacon_candidate", **candidate_record(c)}
+            )
             written += 1
         return written
 
@@ -270,7 +276,9 @@ class BeaconDetector:
                     labels[col] = str(mode.iloc[0])
         return labels
 
-    def _evaluate_pair(self, client_ip: str, server_ip: str, sub_df: pd.DataFrame) -> Optional[BeaconCandidate]:
+    def _evaluate_pair(
+        self, client_ip: str, server_ip: str, sub_df: pd.DataFrame
+    ) -> Optional[BeaconCandidate]:
         series = self._resample(sub_df)
         if len(series) < self.min_samples:
             return None
@@ -315,7 +323,9 @@ class BeaconDetector:
 
         # A beacon's spectrum is a comb: the strongest bin may be any harmonic, so walk down to
         # the fundamental before turning it into a period.
-        fundamental_bin = fundamental_frequency_bin(spectrum, snr, peak_index, self.threshold_factor)
+        fundamental_bin = fundamental_frequency_bin(
+            spectrum, snr, peak_index, self.threshold_factor
+        )
         peak_freq = float(fundamental_bin * freqs[1]) if fundamental_bin > 0 else None
         peak_period = float(1.0 / peak_freq) if peak_freq else None
 
@@ -355,10 +365,12 @@ NOISE_GUARD_BINS = 2  # left out on each side: a peak's own main lobe (Hamming: 
 def local_noise_floor(spectrum: np.ndarray) -> np.ndarray:
     """Median magnitude of each bin's neighbours, leaving out the bin's own main lobe."""
     width = 2 * NOISE_WINDOW_BINS + 1
-    padded = np.pad(spectrum, NOISE_WINDOW_BINS, mode="reflect" if len(spectrum) > NOISE_WINDOW_BINS else "edge")
+    padded = np.pad(
+        spectrum, NOISE_WINDOW_BINS, mode="reflect" if len(spectrum) > NOISE_WINDOW_BINS else "edge"
+    )
     windows = np.lib.stride_tricks.sliding_window_view(padded, width)
     keep = np.ones(width, dtype=bool)
-    keep[NOISE_WINDOW_BINS - NOISE_GUARD_BINS:NOISE_WINDOW_BINS + NOISE_GUARD_BINS + 1] = False
+    keep[NOISE_WINDOW_BINS - NOISE_GUARD_BINS : NOISE_WINDOW_BINS + NOISE_GUARD_BINS + 1] = False
     return np.median(windows[:, keep], axis=1)
 
 
@@ -381,7 +393,7 @@ def fundamental_frequency_bin(
     position = float(peak_index)
     if 0 < peak_index < n - 1:
         # Parabolic interpolation on log magnitude: sub-bin position of the main peak.
-        left, centre, right = np.log(spectrum[peak_index - 1:peak_index + 2] + 1e-12)
+        left, centre, right = np.log(spectrum[peak_index - 1 : peak_index + 2] + 1e-12)
         curvature = left - 2 * centre + right
         if curvature < 0:
             position = peak_index + 0.5 * (left - right) / curvature
@@ -392,7 +404,7 @@ def fundamental_frequency_bin(
 
     def peak_near(target: float) -> Optional[int]:
         i = int(np.searchsorted(peaks, target))
-        close = [p for p in peaks[max(i - 1, 0):i + 1] if abs(p - target) <= 1]
+        close = [p for p in peaks[max(i - 1, 0) : i + 1] if abs(p - target) <= 1]
         return min(close, key=lambda p: abs(p - target)) if close else None
 
     for m in range(int(position // min_cycles), 1, -1):
@@ -435,4 +447,3 @@ def candidate_record(c: BeaconCandidate) -> Dict:
 def candidates_to_frame(results: List[BeaconCandidate]) -> pd.DataFrame:
     """Flatten candidates into a DataFrame for ranking / export / Power BI."""
     return pd.DataFrame([candidate_record(c) for c in results])
-

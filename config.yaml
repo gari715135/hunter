@@ -1,20 +1,5 @@
 # ./config.yaml
-
-bollinger_analysis:
-  s3:
-    bucket: "hunt-data-store"
-    prefix: "sysdig/monitor/prometheusV5/conformed"
-    metrics:
-      - "sysdig_connection_net_out_bytes"
-      - "sysdig_connection_net_connection_out_count"
-    cluster: "eks-dev-k8s-west-2"
-    dt: "20260821"
-  analysis:
-    holdout_days: 30
-    bollinger_window: "30D"
-    bollinger_std: 2
-    poly_degrees: [1, 2, 3, 4, 8, 11, 14]
-
+# LOCAL CONFIG - SMALL DIFFS MAY EXIST BETWEEN THIS AND SERVER
 prometheus:
   url: "https://us2.app.sysdig.com"
   metrics:
@@ -22,7 +7,7 @@ prometheus:
     - sysdig_connection_net_out_bytes
     - sysdig_connection_net_connection_in_count
     - sysdig_connection_net_connection_out_count
-
+ 
   # Per-cluster queries add kube_namespace_name!="<ns>" for each entry.
   # "" drops series with no namespace label (host-level traffic).
   exclude_namespaces:
@@ -37,11 +22,11 @@ prometheus:
     # - splunk
     # - sysdig-agent
     # - traceable-ai
-
+ 
   # Per-cluster queries add container_name!="<name>" for each entry.
   exclude_containers:
     - istio-proxy
-
+ 
   # Server-side aggregation: query becomes `<op> by (<by>) (<selector>)`,
   # or `<op> by (<by>) (<fn>(<selector>[<step>s]))` when a time function is set below.
   # Verified exact vs. the raw sum (difference ~1e-10 relative) on 2026-10-14.
@@ -106,59 +91,60 @@ prometheus:
       - kube_workload_label_platform_short_name
       - kube_node_label_topology_kubernetes_io_zone
       - kube_node_label_karpenter_sh_nodepool
-
+ 
 storage:
   # backend: "s3"  # Options: "local" or "s3"
   backend: "local"
   local:
-    # parent_directory: "/Users/arisgia/Documents/HUNT/"
     parent_directory: "/Users/arisgia/Documents/hunt-cpy/zero-day-kubernetes-threat-detection/data"
-    base_path: "hunt-data-store/sysdig/monitor/prometheus"
+    base_path: "hunt-data-store/sysdig/monitor/prometheusV2_0_0"
   s3:
-    base_path: "s3://hunt-data-store/sysdig/monitor/prometheusV7"
-
+    base_path: "s3://hunt-data-store/sysdig/monitor/prometheusV2_0_0"
+ 
 run:
   num_workers: 5
   fetch_all_clusters_at_once: false
-
+ 
 logging:
   app: "hunt-fetch"  # "app" field on every JSON event
-  version: "1.0.0"   # "version" field on every JSON event; bump on each release (APP_VERSION env var overrides)
+  version: "2.0.0"   # "version" field on every JSON event; bump on each release (APP_VERSION env var overrides)
   root_level: "INFO"
   console_level: "INFO"
-  file_level: "INFO"  # file handler currently writes to the Splunk-tailed path; DEBUG would flood Splunk
-
+  file_level: "INFO"
+ 
   components:
-    config: "DEBUG"
-    client: "DEBUG"
-    ingestor: "DEBUG"
-    orchestrator: "DEBUG"
-    storage: "DEBUG"
-
+    config: "INFO"
+    client: "INFO"
+    ingestor: "INFO"
+    orchestrator: "INFO"
+    storage: "INFO"
+ 
   handlers:
     file:
-      path: "/opt/hunt/logs/beacons.log"  # TEMPORARY: only file the Splunk forwarder tails (was logs/fetch_data/app.log)
+      # path: "/opt/hunt/logs/beacons.log"  # TEMPORARY: only file the Splunk forwarder tails (was logs/fetch_data/app.log)
+      path: "/Users/arisgia/Documents/hunt-cpy/zero-day-kubernetes-threat-detection/logs/beacons.log"
       max_bytes: 52428800  # 50MB, same as detect records (shared file)
       backup_count: 5
-
+ 
     error_file:
       path: "logs/fetch_data/error.log"
       max_bytes: 5242880  # 5MB
       backup_count: 3
-
+ 
     console:
       enabled: true
       colored: true  # Will only apply when storage.backend == "local"
-
+ 
     # Structured (same format as the files) to stdout, for container log collection (e.g. EKS).
     # Off on EC2, where the Splunk forwarder tails the mounted log directory.
     stdout:
       enabled: false
-
+ 
   format:
     type: "json"  # "json" (one JSON object per line, for Splunk) or "kv" (legacy key=value, uses `detailed`)
     detailed: "timestamp=%(asctime)s level=%(levelname)s logger=%(name)s correlation_id=%(correlation_id)s job_id=%(job_id)s thread=%(threadName)s message=\"%(message)s\""
     console: "%(asctime)s [%(levelname)-8s] %(name)-30s | %(message)s"
+   
 # Logging for scripts/detect_beacons.py: same JSON event format as `logging`, separate app/files.
 # BEACON_LOG_DIR / BEACON_LOG_FILE override the directory / records filename.
 beacon_logging:
@@ -167,36 +153,37 @@ beacon_logging:
   root_level: "INFO"
   console_level: "INFO"
   file_level: "DEBUG"
-
+ 
   components:
     config: "DEBUG"
     detector: "DEBUG"
     records: "INFO"
-
+ 
   handlers:
     file:
       path: "logs/detect_beacons/app.log"
       max_bytes: 10485760  # 10MB
       backup_count: 3
-
+ 
     error_file:
       path: "logs/detect_beacons/error.log"
       max_bytes: 5242880  # 5MB
       backup_count: 3
-
+ 
     # One beacon_candidate event per line, nothing else (for the Splunk forwarder).
     records:
-      path: "/opt/hunt/logs/beacons.log"  # TEMPORARY: only file the Splunk forwarder tails (was logs/detect_beacons/beacons.log)
+      # path: "/opt/hunt/logs/beacons.log"  # TEMPORARY: only file the Splunk forwarder tails (was logs/detect_beacons/beacons.log)
+      path: "/Users/arisgia/Documents/hunt-cpy/zero-day-kubernetes-threat-detection/logs/beacons.log"
       max_bytes: 52428800  # 50MB
       backup_count: 5
-
+ 
     console:
       enabled: true
       colored: true
-
+ 
     stdout:
       enabled: false
-
+ 
   format:
     type: "json"
     console: "%(asctime)s [%(levelname)-8s] %(name)-30s | %(message)s"

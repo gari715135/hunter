@@ -154,7 +154,11 @@ class HierarchicalFFTAnalyzer:
 
         except ValueError:
             freqs = np.fft.fftfreq(len(centered), d=self.step_seconds)
-            magnitude = np.abs(np.fft.fft(SignalTransformations.apply_window(centered, self.thresholds.window_type)))
+            magnitude = np.abs(
+                np.fft.fft(
+                    SignalTransformations.apply_window(centered, self.thresholds.window_type)
+                )
+            )
 
         spectrum = np.abs(magnitude)
 

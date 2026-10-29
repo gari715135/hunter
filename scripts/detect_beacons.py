@@ -23,6 +23,7 @@ Environment variables
   BEACON_CLIENT_COL / BEACON_SERVER_COL / BEACON_TIME_COL / BEACON_VALUE_COL
                           column-name overrides for the input frame
 """
+
 import os
 import re
 import sys
@@ -67,15 +68,23 @@ def apply_log_dir_overrides(cfg: dict, log_dir: str = None, log_file: str = None
     if log_dir:
         for name in ("file", "error_file", "records"):
             if name in handlers:
-                handlers[name]["path"] = os.path.join(log_dir, os.path.basename(handlers[name]["path"]))
+                handlers[name]["path"] = os.path.join(
+                    log_dir, os.path.basename(handlers[name]["path"])
+                )
     if log_file and "records" in handlers:
-        handlers["records"]["path"] = os.path.join(os.path.dirname(handlers["records"]["path"]), log_file)
+        handlers["records"]["path"] = os.path.join(
+            os.path.dirname(handlers["records"]["path"]), log_file
+        )
 
 
 def main() -> int:
     run_id = generate_correlation_id()
-    cfg = load_yaml_config(os.environ.get("BEACON_CONFIG") or str(Path(PROJECT_ROOT) / "config.yaml"))
-    apply_log_dir_overrides(cfg, os.environ.get("BEACON_LOG_DIR"), os.environ.get("BEACON_LOG_FILE"))
+    cfg = load_yaml_config(
+        os.environ.get("BEACON_CONFIG") or str(Path(PROJECT_ROOT) / "config.yaml")
+    )
+    apply_log_dir_overrides(
+        cfg, os.environ.get("BEACON_LOG_DIR"), os.environ.get("BEACON_LOG_FILE")
+    )
 
     loggers = setup_logging_system(cfg, section=LOGGING_SECTION)
     input_uri = os.environ.get("BEACON_INPUT")
@@ -90,10 +99,18 @@ def run(loggers: dict, input_uri: str) -> int:
     run_start = time.monotonic()
 
     if not input_uri:
-        main_logger.error("BEACON_INPUT is required (parquet path or s3:// URI)", extra={"event": "config_missing", "key": "BEACON_INPUT"})
+        main_logger.error(
+            "BEACON_INPUT is required (parquet path or s3:// URI)",
+            extra={"event": "config_missing", "key": "BEACON_INPUT"},
+        )
         main_logger.error(
             "Detect run failed",
-            extra={"event": "detect_run_completed", "status": "failed", "exit_code": 2, "duration_ms": 0},
+            extra={
+                "event": "detect_run_completed",
+                "status": "failed",
+                "exit_code": 2,
+                "duration_ms": 0,
+            },
         )
         return 2
 
@@ -138,10 +155,16 @@ def run(loggers: dict, input_uri: str) -> int:
         )
 
         candidates = detector.detect(df)
-        written = detector.log_results(candidates, record_logger=loggers["records"], suspicious_only=suspicious_only)
+        written = detector.log_results(
+            candidates, record_logger=loggers["records"], suspicious_only=suspicious_only
+        )
 
     except Exception as e:
-        main_logger.critical("Detect run failed with unhandled exception", extra={"event": "detect_failed"}, exc_info=True)
+        main_logger.critical(
+            "Detect run failed with unhandled exception",
+            extra={"event": "detect_failed"},
+            exc_info=True,
+        )
         main_logger.critical(
             "Detect run crashed",
             extra={

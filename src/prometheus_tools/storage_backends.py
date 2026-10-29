@@ -126,7 +126,12 @@ class S3Backend(StorageBackend):
         bucket = path_parts[0]
         prefix = path_parts[1].rstrip("/") if len(path_parts) > 1 else ""
 
-        key = os.path.join(prefix, *partition_parts(data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters))
+        key = os.path.join(
+            prefix,
+            *partition_parts(
+                data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters
+            ),
+        )
         return f"s3://{bucket}/{key}"
 
 
@@ -137,7 +142,8 @@ class LocalBackend(StorageBackend):
         super().__init__(logger)
         self.parent_dir = Path(parent_dir).resolve()
         self.logger.debug(
-            "LocalBackend initialized", extra={"event": "storage_init", "backend": "local", "parent_dir": str(self.parent_dir)}
+            "LocalBackend initialized",
+            extra={"event": "storage_init", "backend": "local", "parent_dir": str(self.parent_dir)},
         )
 
     def put_object(self, path: str, body: bytes) -> None:
@@ -183,7 +189,12 @@ class LocalBackend(StorageBackend):
         file_ext: str,
         fetch_all_clusters: bool = False,
     ) -> str:
-        rel_path = os.path.join(base_path, *partition_parts(data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters))
+        rel_path = os.path.join(
+            base_path,
+            *partition_parts(
+                data_type, metric_name, cluster, folder, fname, file_ext, fetch_all_clusters
+            ),
+        )
 
         # Combine with parent directory to get absolute path
         full_path = self.parent_dir / rel_path

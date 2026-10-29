@@ -109,7 +109,9 @@ class ProgressTracker:
             "failed": self.failed,
             "truncated": self.truncated,
             "failed_jobs": sorted(self.failed_jobs),
-            "success_rate": round((self.succeeded + self.empty) / self.total * 100, 1) if self.total > 0 else 0,
+            "success_rate": (
+                round((self.succeeded + self.empty) / self.total * 100, 1) if self.total > 0 else 0
+            ),
             "execution_ms": int(elapsed * 1000),
             "avg_rate_per_s": round(self.completed / elapsed, 2) if elapsed > 0 else 0,
         }
@@ -136,7 +138,12 @@ class MetricsFetchOrchestrator:
         if fetch_all_clusters:
             self.logger.info(
                 "Creating jobs, one query per metric",
-                extra={"event": "jobs_created", "mode": "all_clusters", "metrics": len(metrics), "jobs": len(metrics)},
+                extra={
+                    "event": "jobs_created",
+                    "mode": "all_clusters",
+                    "metrics": len(metrics),
+                    "jobs": len(metrics),
+                },
             )
             return [Job(metric=m, cluster=None) for m in metrics]
         else:
@@ -174,7 +181,9 @@ class MetricsFetchOrchestrator:
         if shutdown_requested:
             return None
 
-        with log_context(job_id=job_id(job), metric=job.metric, cluster=job.cluster or "all_clusters"):
+        with log_context(
+            job_id=job_id(job), metric=job.metric, cluster=job.cluster or "all_clusters"
+        ):
             start_time = time.monotonic()
             try:
                 result = self.ingestor.get_sysdig_metric(
@@ -183,7 +192,9 @@ class MetricsFetchOrchestrator:
                     fetch_all_clusters=fetch_all_clusters,
                 )
             except Exception as e:
-                self.logger.exception("Fetch job raised an exception", extra={"event": "fetch_job_error"})
+                self.logger.exception(
+                    "Fetch job raised an exception", extra={"event": "fetch_job_error"}
+                )
                 result = JobResult(
                     metric=job.metric,
                     cluster=job.cluster or "all_clusters",
@@ -218,7 +229,9 @@ class MetricsFetchOrchestrator:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fetch") as pool:
             # Each job runs in a copy of this thread's context, so the run_id follows it into the worker
             futures = {
-                pool.submit(contextvars.copy_context().run, self._run_job, job, fetch_all_clusters): job
+                pool.submit(
+                    contextvars.copy_context().run, self._run_job, job, fetch_all_clusters
+                ): job
                 for job in jobs
             }
 
@@ -229,7 +242,12 @@ class MetricsFetchOrchestrator:
                 except Exception as e:  # _run_job catches everything; this is a last resort
                     self.logger.exception(
                         "Fetch job crashed",
-                        extra={"event": "fetch_job_error", "job_id": job_id(job), "metric": job.metric, "cluster": job.cluster},
+                        extra={
+                            "event": "fetch_job_error",
+                            "job_id": job_id(job),
+                            "metric": job.metric,
+                            "cluster": job.cluster,
+                        },
                     )
                     result = JobResult(
                         metric=job.metric,
@@ -244,7 +262,10 @@ class MetricsFetchOrchestrator:
                     progress.record(job_id(job), result.status, truncated=result.truncated)
 
                 if shutdown_requested:
-                    self.logger.warning("Shutdown requested, cancelling remaining jobs", extra={"event": "jobs_cancelling"})
+                    self.logger.warning(
+                        "Shutdown requested, cancelling remaining jobs",
+                        extra={"event": "jobs_cancelling"},
+                    )
                     # Cancel remaining futures
                     for f in futures:
                         if not f.done():

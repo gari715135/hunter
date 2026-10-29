@@ -53,46 +53,86 @@ def beacon_rows(
     idx = np.round(offsets / step).astype(int)
     values[idx[(idx >= 0) & (idx < len(grid))]] = spike
 
-    rows = pd.DataFrame({c: pd.Series([None] * len(grid), dtype=template[c].dtype) for c in template.columns})
+    rows = pd.DataFrame(
+        {c: pd.Series([None] * len(grid), dtype=template[c].dtype) for c in template.columns}
+    )
     rows[time_col] = grid if template[time_col].dt.tz is not None else grid.tz_localize(None)
     rows[client_col] = client_ip
     rows[server_col] = server_ip
     rows[value_col] = values
     if "metric.kube_pod_name" in rows.columns:
         rows["metric.kube_pod_name"] = INJECTED_POD
-    if "metric.kube_cluster_name" in rows.columns and template["metric.kube_cluster_name"].notna().any():
+    if (
+        "metric.kube_cluster_name" in rows.columns
+        and template["metric.kube_cluster_name"].notna().any()
+    ):
         rows["metric.kube_cluster_name"] = template["metric.kube_cluster_name"].mode().iloc[0]
     return rows
 
 
 def partition_suffix(path: str) -> Path:
     """The key=value folders of a hive-partitioned path (metric=/cluster=/dt=), in order."""
-    return Path(*[part for part in Path(path).parts if re.fullmatch(r"[^=/]+=[^/]+", part)] or ["."])
+    return Path(
+        *[part for part in Path(path).parts if re.fullmatch(r"[^=/]+=[^/]+", part)] or ["."]
+    )
 
 
 def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("input", help="parquet file or directory for one metric/cluster")
-    parser.add_argument("--out", required=True, help="directory to write under (input's metric=/cluster=/dt= folders are kept)")
+    parser.add_argument(
+        "--out",
+        required=True,
+        help="directory to write under (input's metric=/cluster=/dt= folders are kept)",
+    )
     parser.add_argument("--client-ip", default="10.250.250.250")
-    parser.add_argument("--server-ip", default="203.0.113.10", help="must be public (default: TEST-NET-3)")
-    parser.add_argument("--period", type=int, default=60, help="seconds between spikes (default: 60)")
-    parser.add_argument("--step", type=int, default=10, help="sample step of the data, seconds (default: 10)")
-    parser.add_argument("--spike", type=float, default=1.0, help="value at each check-in (default: 1, one connection)")
-    parser.add_argument("--baseline", type=float, default=0.0, help="value between check-ins (default: 0)")
-    parser.add_argument("--jitter", type=int, default=0, help="max seconds each spike is moved early/late (default: 0)")
+    parser.add_argument(
+        "--server-ip", default="203.0.113.10", help="must be public (default: TEST-NET-3)"
+    )
+    parser.add_argument(
+        "--period", type=int, default=60, help="seconds between spikes (default: 60)"
+    )
+    parser.add_argument(
+        "--step", type=int, default=10, help="sample step of the data, seconds (default: 10)"
+    )
+    parser.add_argument(
+        "--spike",
+        type=float,
+        default=1.0,
+        help="value at each check-in (default: 1, one connection)",
+    )
+    parser.add_argument(
+        "--baseline", type=float, default=0.0, help="value between check-ins (default: 0)"
+    )
+    parser.add_argument(
+        "--jitter",
+        type=int,
+        default=0,
+        help="max seconds each spike is moved early/late (default: 0)",
+    )
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
 
     if args.period < 2 * args.step:
-        parser.error("--period must be at least twice --step, or there is no repeating pattern to see")
+        parser.error(
+            "--period must be at least twice --step, or there is no repeating pattern to see"
+        )
 
     original = pd.read_parquet(args.input)
     if original.empty:
         parser.error(f"{args.input} has no rows")
     injected = beacon_rows(
-        original, args.client_ip, args.server_ip, args.period, args.step,
-        args.spike, args.baseline, args.jitter, args.seed,
+        original,
+        args.client_ip,
+        args.server_ip,
+        args.period,
+        args.step,
+        args.spike,
+        args.baseline,
+        args.jitter,
+        args.seed,
     )
     combined = pd.concat([original, injected], ignore_index=True)
 
@@ -100,8 +140,10 @@ def main(argv=None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(out_dir / "part-0.parquet", index=False)
 
-    print(f"Added {len(injected)} rows for {args.client_ip} -> {args.server_ip}, "
-          f"spike every {args.period}s (jitter +/-{args.jitter}s), {len(original)} original rows kept")
+    print(
+        f"Added {len(injected)} rows for {args.client_ip} -> {args.server_ip}, "
+        f"spike every {args.period}s (jitter +/-{args.jitter}s), {len(original)} original rows kept"
+    )
     print(f"BEACON_INPUT={out_dir}")
 
 

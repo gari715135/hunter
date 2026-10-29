@@ -33,14 +33,22 @@ def expected_schema(cfg: dict) -> dict:
     metric = sorted(agg.metrics)[0]
     raw = {"data": {"result": [{"metric": {lbl: "x" for lbl in agg.by}, "values": [[0, "1"]]}]}}
     df, _ = response_to_frame(
-        raw, metric_name=metric, start=0, stop=0, step=10, logger=logging.getLogger(__name__), labels=agg.by
+        raw,
+        metric_name=metric,
+        start=0,
+        stop=0,
+        step=10,
+        logger=logging.getLogger(__name__),
+        labels=agg.by,
     )
     schema = pq.read_schema(io.BytesIO(df_to_parquet_bytes(df)))
     return {f.name: str(f.type).replace("large_string", "string") for f in schema}
 
 
 def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--config", default=str(Path(PROJECT_ROOT) / "config.yaml"))
     args = parser.parse_args(argv)
     with open(args.config) as f:
