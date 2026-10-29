@@ -30,19 +30,20 @@ COPY config/config.srv.yaml ./config.yaml
 
 
 FROM base AS fetch
+# Label only: the `version` on log events comes from the mounted config, as on the host
 ARG APP_VERSION=unknown
-# Overrides logging.version on every JSON event (see logger_config.build_formatter)
-ENV APP_VERSION=$APP_VERSION
+LABEL org.opencontainers.image.version=$APP_VERSION
 COPY src/ ./src/
 # umask 002 so log files stay group-writable for the team (matches run_fetch.sh --no-docker);
-# exec keeps python as PID 1 so it receives SIGTERM from `docker stop`.
-CMD ["sh", "-c", "umask 002 && exec python -m hunt.cli.fetch"]
+# exec keeps python as PID 1 so it receives SIGTERM from `docker stop`. Arguments after the
+# image name are passed to the module, e.g. `docker run ... hunt-data-fetch --config <path>`.
+ENTRYPOINT ["sh", "-c", "umask 002 && exec python -m hunt.cli.fetch \"$@\"", "hunt.cli.fetch"]
 
 
 FROM base AS beacon
 COPY requirements-beacon.txt .
 RUN pip install --no-cache-dir -r requirements-beacon.txt
 ARG APP_VERSION=unknown
-ENV APP_VERSION=$APP_VERSION
+LABEL org.opencontainers.image.version=$APP_VERSION
 COPY src/ ./src/
-CMD ["sh", "-c", "umask 002 && exec python -m hunt.cli.detect_beacons"]
+ENTRYPOINT ["sh", "-c", "umask 002 && exec python -m hunt.cli.detect_beacons \"$@\"", "hunt.cli.detect_beacons"]

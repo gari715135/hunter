@@ -1,8 +1,10 @@
 import contextvars
 import json
+import logging
 import threading
+import time
 
-from hunt.logger_config import build_formatter, log_context
+from hunt.logger_config import build_formatter, log_context, utc
 
 
 def test_json_line_with_quotes_and_newlines(capture):
@@ -87,3 +89,21 @@ def test_kv_format_still_available():
     formatter = build_formatter({"format": {"type": "kv"}})
     assert "%(correlation_id)s" in formatter._fmt
     assert json.dumps({}) == "{}"
+
+
+def test_text_formats_render_asctime_in_utc(monkeypatch):
+    # Pretend the host is on Eastern time; text timestamps must still be UTC like the JSON `ts`
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    try:
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "m", (), None)
+        record.created = 0  # 1970-01-01 00:00:00 UTC
+        assert logging.Formatter().formatTime(record, "%H") == "19"  # local time really is shifted
+        for formatter in (
+            build_formatter({"format": {"type": "kv"}}),
+            utc(logging.Formatter("%(asctime)s")),
+        ):
+            assert formatter.formatTime(record, "%Y-%m-%d %H:%M:%S") == "1970-01-01 00:00:00"
+    finally:
+        monkeypatch.undo()
+        time.tzset()

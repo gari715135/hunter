@@ -48,8 +48,12 @@ case "$ACTION" in
         for name in $(compgen -e | grep '^BEACON_'); do
             env_args+=(-e "$name")
         done
+        group_args=()
+        for gid in $(id -G); do
+            group_args+=(--group-add "$gid")
+        done
         exec docker run --rm --network host \
-            --user "$(id -u):$(id -g)" \
+            --user "$(id -u):$(id -g)" "${group_args[@]}" \
             "${env_args[@]}" \
             -v /opt/hunt/config.yaml:/opt/hunt/config.yaml:ro \
             -v /opt/hunt/logs:/opt/hunt/logs \
