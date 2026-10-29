@@ -1,0 +1,4 @@
+# ./requirements-beacon.txt
+# Extra dependencies of hunt.cli.detect_beacons, on top of requirements.txt.
+# s3fs lets pd.read_parquet read BEACON_INPUT=s3://...
+s3fs>=2024.3

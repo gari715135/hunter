@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -156,6 +157,12 @@ class ContextualLogger:
         self._logger.exception(msg, *args, **kwargs)
 
 
+def utc(formatter: logging.Formatter) -> logging.Formatter:
+    """Render %(asctime)s in UTC, like the JSON `ts`, whatever the host's time zone."""
+    formatter.converter = time.gmtime
+    return formatter
+
+
 def build_formatter(logging_cfg: dict) -> logging.Formatter:
     """Formatter for file/stdout handlers: JSON (default) or the legacy key=value format."""
     formats = logging_cfg.get("format", {})
@@ -169,7 +176,7 @@ def build_formatter(logging_cfg: dict) -> logging.Formatter:
         "detailed",
         'timestamp=%(asctime)s level=%(levelname)s logger=%(name)s correlation_id=%(correlation_id)s job_id=%(job_id)s thread=%(threadName)s message="%(message)s"',
     )
-    return logging.Formatter(fmt=detailed_format, datefmt="%Y-%m-%d %H:%M:%S")
+    return utc(logging.Formatter(fmt=detailed_format, datefmt="%Y-%m-%d %H:%M:%S"))
 
 
 def setup_logging_system(config: dict, section: str = "logging") -> dict:
@@ -289,7 +296,7 @@ def setup_logging_system(config: dict, section: str = "logging") -> dict:
             if storage_backend == "s3":
                 root_logger.debug("Console colors disabled for S3/production backend")
 
-        console_handler.setFormatter(console_formatter)
+        console_handler.setFormatter(utc(console_formatter))
         console_handler.addFilter(context_filter)
         root_logger.addHandler(console_handler)
 

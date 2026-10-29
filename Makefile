@@ -2,7 +2,7 @@
 # Shortcuts for the scripts in scripts/. Run from the repo root.
 PYTHON ?= python
 
-.PHONY: test fetch-local build-fetch build-beacon run-fetch run-fetch-host s3-push s3-pull
+.PHONY: test fetch-local build-fetch build-beacon run-fetch run-fetch-host run-beacon s3-push s3-pull
 
 test:
 	$(PYTHON) -m pytest
@@ -22,6 +22,10 @@ run-fetch:
 
 run-fetch-host:
 	scripts/run_fetch.sh --no-docker
+
+# BEACON_INPUT=s3://... make run-beacon (other BEACON_* variables are passed through too)
+run-beacon:
+	scripts/docker.sh beacon run
 
 s3-push:
 	scripts/s3_sync.sh push
