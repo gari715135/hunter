@@ -1,0 +1,9 @@
+# ./.dockerignore
+# Allowlist: the images only need the package, the server config and the requirements.
+*
+!src/
+!config/config.srv.yaml
+!requirements.txt
+!requirements-beacon.txt
+**/__pycache__
+**/*.pyc
