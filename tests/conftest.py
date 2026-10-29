@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+SRC_DIR = str(Path(__file__).resolve().parent.parent / "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
-from src.logger_config import ContextFilter, ContextualLogger, JsonFormatter  # noqa: E402
+from hunt.logger_config import ContextFilter, ContextualLogger, JsonFormatter  # noqa: E402
 
 
 class JsonCapture:

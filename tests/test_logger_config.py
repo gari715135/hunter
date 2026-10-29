@@ -2,7 +2,7 @@ import contextvars
 import json
 import threading
 
-from src.logger_config import build_formatter, log_context
+from hunt.logger_config import build_formatter, log_context
 
 
 def test_json_line_with_quotes_and_newlines(capture):
